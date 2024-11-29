@@ -1,17 +1,20 @@
 import tiktoken
 from openai import OpenAI
 import os
-import pickle
-import faiss
-from sentence_transformers import SentenceTransformer
+import numpy as np
 import PyPDF2
 import docx
+from .oracle_vector_store import OracleVectorStore
+from sentence_transformers import SentenceTransformer
 
 # 初始化OpenAI客户端
 client = OpenAI(
     api_key="sk-2D0EZSwcWUcD4c2K59353b7214854bBd8f35Ac131564EfBa",
     base_url="https://free.gpt.ge/v1"
 )
+
+# 初始化Oracle向量存储
+vector_store = OracleVectorStore()
 
 # 计算token数量
 def num_tokens_from_string(string: str) -> int:
@@ -50,51 +53,35 @@ def vectorize_document(file, max_tokens):
     
     model = load_model()
     vectors = model.encode(chunks)
-    index = faiss.IndexFlatL2(384)  # 384是向量维度
-    index.add(vectors)
-    return chunks, index
+    
+    # 将向量和文档添加到Oracle
+    documents = [{
+        'file_path': file.name,
+        'content': chunk,
+        'metadata': {'file_type': file.type}
+    } for chunk in chunks]
+    vector_store.add_vectors(vectors, documents)
+    
+    return chunks, vectors
 
 # 保存索引和chunks
-def save_index(file_name, chunks, index):
-    if not os.path.exists('indices'):
-        os.makedirs('indices')
-    with open(f'indices/{file_name}.pkl', 'wb') as f:
-        pickle.dump((chunks, index), f)
-    file_list_path = 'indices/file_list.txt'
-    if os.path.exists(file_list_path):
-        with open(file_list_path, 'r') as f:
-            file_list = f.read().splitlines()
-    else:
-        file_list = []
-    if file_name not in file_list:
-        file_list.append(file_name)
-        with open(file_list_path, 'w') as f:
-            f.write('\n'.join(file_list))
+def save_index(file_name, chunks, vectors):
+    # 不再需要本地保存,因为已经保存到Oracle中
+    pass
 
 # 加载所有保存的索引
 def load_all_indices():
-    file_indices = {}
-    file_list_path = 'indices/file_list.txt'
-    if os.path.exists(file_list_path):
-        with open(file_list_path, 'r') as f:
-            file_list = f.read().splitlines()
-        for file_name in file_list:
-            file_path = f'indices/{file_name}.pkl'
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as f:
-                    chunks, index = pickle.load(f)
-                file_indices[file_name] = (chunks, index)
-    return file_indices
+    # 不再需要本地加载,因为数据在Oracle中
+    pass
 
 # 删除索引
 def delete_index(file_name):
-    if os.path.exists(f'indices/{file_name}.pkl'):
-        os.remove(f'indices/{file_name}.pkl')
-    file_list_path = 'indices/file_list.txt'
-    if os.path.exists(file_list_path):
-        with open(file_list_path, 'r') as f:
-            file_list = f.read().splitlines()
-        if file_name in file_list:
-            file_list.remove(file_name)
-            with open(file_list_path, 'w') as f:
-                f.write('\n'.join(file_list)) 
+    # TODO: 实现从Oracle中删除文档的功能
+    pass
+
+# 搜索相似文档
+def search_similar_documents(query_text, top_k=5):
+    model = load_model()
+    query_vector = model.encode([query_text])[0]
+    return vector_store.search_vectors(query_vector, top_k)
+    

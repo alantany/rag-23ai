@@ -1,12 +1,41 @@
 """
-AI知识问答系统
+AI知识问答系统 - Oracle Vector Store版本
 """
 
 import streamlit as st
-from utils.common import load_all_indices
-from tabs import rag_qa, web_qa, data_analysis
+from utils.oracle_vector_store import OracleVectorStore
+from sentence_transformers import SentenceTransformer
+import openai
+import PyPDF2
+import docx
+from io import BytesIO
 import os
-import pickle
+from dotenv import load_dotenv
+import logging
+import sys
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# 设置oracle_vector_store的日志级别
+logging.getLogger('utils.oracle_vector_store').setLevel(logging.INFO)
+
+# 加载环境变量
+load_dotenv()
+
+# 初始化OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# 初始化向量模型
+embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # 设置页面配置
 st.set_page_config(
@@ -17,10 +46,8 @@ st.set_page_config(
     menu_items=None
 )
 
-# 添加开发者信息
+# 页面样式设置
 st.markdown("<h6 style='text-align: right; color: gray;'>开发者: Huaiyuan Tan</h6>", unsafe_allow_html=True)
-
-# 隐藏 Streamlit 默认的菜单、页脚和 Deploy 按钮
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -31,99 +58,204 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-def main():
-    st.title("AI知识问答系统")
+def read_file_content(uploaded_file) -> str:
+    """读取上传文件的内容"""
+    file_type = uploaded_file.name.split('.')[-1].lower()
+    content = ""
+    
+    try:
+        if file_type == 'txt':
+            content = uploaded_file.getvalue().decode('utf-8')
+        elif file_type == 'pdf':
+            pdf_reader = PyPDF2.PdfReader(BytesIO(uploaded_file.getvalue()))
+            for page in pdf_reader.pages:
+                content += page.extract_text() + "\n"
+        elif file_type == 'docx':
+            doc = docx.Document(BytesIO(uploaded_file.getvalue()))
+            for para in doc.paragraphs:
+                content += para.text + "\n"
+        return content
+    except Exception as e:
+        st.error(f"文件读取错误: {str(e)}")
+        return ""
 
-    # 初始化 session state
-    if "rag_messages" not in st.session_state:
-        st.session_state.rag_messages = []
-    if "web_messages" not in st.session_state:
-        st.session_state.web_messages = []
-    if "file_indices" not in st.session_state:
-        st.session_state.file_indices = load_all_indices()
+def process_document(file_name: str, content: str) -> tuple:
+    """处理文档内容，返回文档块和向量"""
+    # 不再分割文档，直接使用整个内容
+    chunks = [content]  # 改为单个块
+    
+    # 生成向量嵌入
+    vectors = embeddings_model.encode(chunks)
+    
+    # 准备文档数据
+    documents = [{
+        'file_path': file_name,
+        'content': content,
+        'metadata': {'chunk_id': 0}  # 只有一个块，id为0
+    }]
+    
+    return vectors, documents
 
-    # 使用radio来选择当前tab
-    current_tab = st.radio("选择功能", ["RAG知识问答", "网络搜索问答", "AI数据分析"], horizontal=True, label_visibility="collapsed")
-    st.write("当前功能:", current_tab)  # 调试信息
+def get_existing_documents():
+    """获取已存在的文档列表"""
+    with OracleVectorStore() as vector_store:
+        try:
+            documents = vector_store.list_documents()
+            logger.info(f"获取到已存在文档: {len(documents)}个")
+            return documents
+        except Exception as e:
+            logger.error(f"获取文档列表错误: {str(e)}")
+            return []
 
-    # 用户输入
-    prompt = st.chat_input("请输入您的问题:", key="chat_input")
-
-    # 处理用户输入
-    if prompt:
-        st.write("收到输入:", prompt)  # 调试信息
-        if current_tab == "RAG知识问答":
-            st.session_state.rag_messages.append({"role": "user", "content": prompt})
-            if st.session_state.file_indices:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-                with st.chat_message("assistant"):
-                    with st.spinner("正在生成回答..."):
-                        try:
-                            relevant_docs = st.session_state.get('relevant_docs')
-                            response, sources, relevant_excerpt = rag_qa.rag_qa(prompt, st.session_state.file_indices, relevant_docs)
-                            st.markdown(response)
-                            if sources:
-                                st.markdown("**参考来源：**")
-                                file_name, _ = sources[0]
-                                st.markdown(f"**文件：** {file_name}")
-                                if os.path.exists(f'indices/{file_name}.pkl'):
-                                    with open(f'indices/{file_name}.pkl', 'rb') as f:
-                                        file_content = pickle.load(f)[0]
-                                    st.download_button(
-                                        label="下载源文件",
-                                        data='\n'.join(file_content),
-                                        file_name=file_name,
-                                        mime='text/plain',
-                                        key=f"download_new_{len(st.session_state.rag_messages)}"
-                                    )
-                            if relevant_excerpt:
-                                st.markdown(f"**相关原文：** <mark>{relevant_excerpt}</mark>", unsafe_allow_html=True)
-                            else:
-                                st.warning("未能提取到精确的相关原文，但找到相关信息。")
-                            st.session_state.rag_messages.append({
-                                "role": "assistant", 
-                                "content": response, 
-                                "sources": sources,
-                                "relevant_excerpt": relevant_excerpt
-                            })
-                        except Exception as e:
-                            st.error(f"生成回答时发生错误: {str(e)}")
-            else:
-                with st.chat_message("assistant"):
-                    st.warning("请先上传文档。")
-        elif current_tab == "网络搜索问答":
-            st.write("进入网络搜索处理...")  # 调试信息
-            st.session_state.web_messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
-                with st.spinner("正在搜索并生成回答..."):
-                    try:
-                        st.write(f"当前输入: {prompt}")  # 调试信息
-                        st.write(f"是否以'搜索'开头: {prompt.startswith('搜索')}")  # 调试信息
-                        if prompt.startswith("搜索"):
-                            st.write("执行网络搜索...")  # 调试信息
-                            search_query = prompt[2:].strip()
-                            st.write(f"搜索关键词: {search_query}")  # 调试信息
-                            response = web_qa.serpapi_search_qa(search_query)
-                        else:
-                            st.write("执行直接问答...")  # 调试信息
-                            response = web_qa.direct_qa(prompt)
-                        st.markdown(response)
-                        st.session_state.web_messages.append({"role": "assistant", "content": response})
-                    except Exception as e:
-                        st.error(f"生成回答时发生错误: {str(e)}")
-                        st.write(f"错误类型: {type(e)}")  # 调试信息
-                        st.write(f"错误详情: {str(e)}")  # 调试信息
-
-    # 根据当前tab显示相应内容
-    if current_tab == "RAG知识问答":
-        rag_qa.render()
-    elif current_tab == "网络搜索问答":
-        web_qa.render()
+def handle_file_upload():
+    """处理文件上传"""
+    # 显示已有文档
+    st.subheader("已有文档:")
+    existing_docs = get_existing_documents()
+    if existing_docs:
+        for doc in existing_docs:
+            st.text(f"📄 {doc['file_path']} (分块数: {doc['chunk_count']})")
+            logger.info(f"显示文档: {doc}")
     else:
-        data_analysis.render()
+        st.text("暂无文档")
+        logger.warning("没有找到任何文档")
+    
+    st.subheader("上传新文档:")
+    uploaded_file = st.file_uploader("选择文件", type=['txt', 'pdf', 'docx'], key="file_uploader")
+    
+    # 使用session_state来跟踪上传状态
+    if "file_processed" not in st.session_state:
+        st.session_state.file_processed = False
+        
+    if uploaded_file and not st.session_state.file_processed:
+        logger.info(f"收到文件上传: {uploaded_file.name}")
+        with st.spinner("正在处理文档..."):
+            content = read_file_content(uploaded_file)
+            if content:
+                vectors, documents = process_document(uploaded_file.name, content)
+                
+                # 存储到Oracle
+                with OracleVectorStore() as vector_store:
+                    try:
+                        vector_store.init_schema()
+                        # 先删除同名文件的所有记录
+                        deleted = vector_store.delete_document(uploaded_file.name)
+                        if deleted:
+                            logger.info(f"删除已存在的文档: {uploaded_file.name}")
+                        # 添加新的文档
+                        vector_store.add_vectors(vectors, documents)
+                        logger.info(f"成功添加文档: {uploaded_file.name}")
+                        st.success(f"文档 {uploaded_file.name} 处理完成!")
+                        st.session_state.file_processed = True
+                        st.rerun()
+                    except Exception as e:
+                        logger.error(f"文档处理错误: {str(e)}", exc_info=True)
+                        st.error(f"文档处理错误: {str(e)}")
+    
+    # 如果文件已处理，重置状态
+    if not uploaded_file and st.session_state.file_processed:
+        st.session_state.file_processed = False
+
+def search_similar_documents(query: str, top_k: int = 3, preview_only: bool = False) -> list:
+    """搜索相似文档"""
+    logger.info(f"搜索文档，问题：{query}")
+    
+    # 生成查询向量
+    query_vector = embeddings_model.encode([query])[0]
+    
+    # 在Oracle中搜索
+    with OracleVectorStore() as vector_store:
+        try:
+            results = vector_store.search_vectors(
+                query_vector=query_vector,
+                top_k=top_k,
+                preview_only=preview_only,
+                similarity_threshold=0.99  # 放宽阈值，允许更多的匹配结果
+            )
+            return results
+        except Exception as e:
+            logger.error(f"搜索错误: {str(e)}")
+            st.error(f"搜索错误: {str(e)}")
+            return []
+
+def generate_answer(query: str, context: str) -> str:
+    """生成AI回答"""
+    try:
+        # 使用指定的API key和base_url
+        client = openai.OpenAI(
+            api_key="sk-1pUmQlsIkgla3CuvKTgCrzDZ3r0pBxO608YJvIHCN18lvOrn",
+            base_url="https://api.chatanywhere.tech/v1"
+        )
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "你是一个专业的助手。请基于提供的上下文信息回答问题。如果无法从上下文中找到答案，请明确说明。"},
+                {"role": "user", "content": f"上下文信息:\n{context}\n\n问题: {query}"}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"生成回答时发生错误: {str(e)}")
+        return "抱歉，生成回答时出现错误。"
+
+def main():
+    st.title("电子病历问答系统")
+    
+    # 初始化session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    if "file_processed" not in st.session_state:
+        st.session_state.file_processed = False
+    
+    # 文件上传部分
+    handle_file_upload()
+    
+    # 显示历史消息
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # 用户输入
+    if prompt := st.chat_input("请输入您的问题:"):
+        # 添加用户问题到历史记录
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        with st.chat_message("assistant"):
+            with st.spinner("正在搜索相关内容..."):
+                # 搜索相关文档
+                results = search_similar_documents(prompt, top_k=1, preview_only=False)
+                
+                if not results:
+                    error_message = "未找到任何相关文档。请确认：\n1. 文档是否已上传\n2. 患者姓名是否正确\n3. 问题是否准确"
+                    st.warning(error_message)
+                    st.session_state.messages.append({"role": "assistant", "content": error_message})
+                    return
+                
+                # 获取最相关的文档
+                result = results[0]
+                similarity_score = 1 - result['similarity']
+                
+                # 显示匹配的文档信息
+                st.info(f"匹配文档: {result['file_path']} (相似度: {similarity_score:.2%})")
+                
+                if similarity_score < 0.5:
+                    st.warning("⚠️ 注意：当前文档的相似度较低，回答可能不够准确。")
+                
+                # 生成AI回答
+                with st.spinner("正在生成回答..."):
+                    answer = generate_answer(prompt, result['content'])
+                    st.markdown(answer)
+                    
+                    # 保存助手回答到历史记录
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer
+                    })
 
 if __name__ == "__main__":
     main()
