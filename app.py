@@ -4,184 +4,138 @@ AI知识问答系统 - Oracle Vector Store版本
 
 import streamlit as st
 from utils.oracle_vector_store import OracleVectorStore
+from utils.oracle_json_store import OracleJsonStore
+from utils.medical_record_parser import MedicalRecordParser
 from sentence_transformers import SentenceTransformer
-import openai
-import PyPDF2
-import docx
-from io import BytesIO
 import os
-from dotenv import load_dotenv
+import shutil
+from pathlib import Path
 import logging
-import sys
+import openai
+import pdfplumber
+import json
+from typing import Dict, Any, List
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('app.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# 配置日志和初始化模型
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# 设置oracle_vector_store的日志级别
-logging.getLogger('utils.oracle_vector_store').setLevel(logging.INFO)
-
-# 加载环境变量
-load_dotenv()
-
-# 初始化OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# 初始化向量模型
 embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# 设置页面配置
-st.set_page_config(
-    page_title="AI知识问答系统 - by Huaiyuan Tan",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-    menu_items=None
-)
+# 设置文档存储目录
+UPLOAD_DIR = Path("uploaded_documents")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 页面样式设置
-st.markdown("<h6 style='text-align: right; color: gray;'>开发者: Huaiyuan Tan</h6>", unsafe_allow_html=True)
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stDeployButton {display: none;}
-    header {visibility: hidden;}
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+def save_uploaded_file(uploaded_file):
+    """保存上传的文件到本地目录"""
+    file_path = UPLOAD_DIR / uploaded_file.name
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(uploaded_file, f)
+    return str(file_path)
 
-def read_file_content(uploaded_file) -> str:
-    """读取上传文件的内容"""
-    file_type = uploaded_file.name.split('.')[-1].lower()
-    content = ""
-    
+def read_file_content(file_path):
+    """读取文件内容，使用 pdfplumber 处理 PDF"""
     try:
-        if file_type == 'txt':
-            content = uploaded_file.getvalue().decode('utf-8')
-        elif file_type == 'pdf':
-            pdf_reader = PyPDF2.PdfReader(BytesIO(uploaded_file.getvalue()))
-            for page in pdf_reader.pages:
-                content += page.extract_text() + "\n"
-        elif file_type == 'docx':
-            doc = docx.Document(BytesIO(uploaded_file.getvalue()))
-            for para in doc.paragraphs:
-                content += para.text + "\n"
-        return content
-    except Exception as e:
-        st.error(f"文件读取错误: {str(e)}")
-        return ""
-
-def process_document(file_name: str, content: str) -> tuple:
-    """处理文档内容，返回文档块和向量"""
-    # 不再分割文档，直接使用整个内容
-    chunks = [content]  # 改为单个块
-    
-    # 生成向量嵌入
-    vectors = embeddings_model.encode(chunks)
-    
-    # 准备文档数据
-    documents = [{
-        'file_path': file_name,
-        'content': content,
-        'metadata': {'chunk_id': 0}  # 只有一个块，id为0
-    }]
-    
-    return vectors, documents
-
-def get_existing_documents():
-    """获取已存在的文档列表"""
-    with OracleVectorStore() as vector_store:
-        try:
-            documents = vector_store.list_documents()
-            logger.info(f"获取到已存在文档: {len(documents)}个")
-            return documents
-        except Exception as e:
-            logger.error(f"获取文档列表错误: {str(e)}")
-            return []
-
-def handle_file_upload():
-    """处理文件上传"""
-    # 显示已有文档
-    st.subheader("已有文档:")
-    existing_docs = get_existing_documents()
-    if existing_docs:
-        for doc in existing_docs:
-            st.text(f"📄 {doc['file_path']} (分块数: {doc['chunk_count']})")
-            logger.info(f"显示文档: {doc}")
-    else:
-        st.text("暂无文档")
-        logger.warning("没有找到任何文档")
-    
-    st.subheader("上传新文档:")
-    uploaded_file = st.file_uploader("选择文件", type=['txt', 'pdf', 'docx'], key="file_uploader")
-    
-    # 使用session_state来跟踪上传状态
-    if "file_processed" not in st.session_state:
-        st.session_state.file_processed = False
+        # 获取文件扩展名
+        file_extension = str(file_path).lower().split('.')[-1]
         
-    if uploaded_file and not st.session_state.file_processed:
-        logger.info(f"收到文件上传: {uploaded_file.name}")
-        with st.spinner("正在处理文档..."):
-            content = read_file_content(uploaded_file)
-            if content:
-                vectors, documents = process_document(uploaded_file.name, content)
-                
-                # 存储到Oracle
-                with OracleVectorStore() as vector_store:
-                    try:
-                        vector_store.init_schema()
-                        # 先删除同名文件的所有记录
-                        deleted = vector_store.delete_document(uploaded_file.name)
-                        if deleted:
-                            logger.info(f"删除已存在的文档: {uploaded_file.name}")
-                        # 添加新的文档
-                        vector_store.add_vectors(vectors, documents)
-                        logger.info(f"成功添加文档: {uploaded_file.name}")
-                        st.success(f"文档 {uploaded_file.name} 处理完成!")
-                        st.session_state.file_processed = True
-                        st.rerun()
-                    except Exception as e:
-                        logger.error(f"文档处理错误: {str(e)}", exc_info=True)
-                        st.error(f"文档处理错误: {str(e)}")
-    
-    # 如果文件已处理，重置状态
-    if not uploaded_file and st.session_state.file_processed:
-        st.session_state.file_processed = False
+        # PDF文件处理
+        if file_extension == 'pdf':
+            with pdfplumber.open(file_path) as pdf:
+                text = ''
+                for page in pdf.pages:
+                    text += page.extract_text() + '\n'
+                return text.strip()
+        
+        # 文本文件处理
+        else:
+            encodings = ['utf-8', 'gbk', 'gb2312', 'gb18030']
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        return f.read().strip()
+                except UnicodeDecodeError:
+                    continue
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"文件读取失败: {str(e)}")
+        return None
 
-def search_similar_documents(query: str, top_k: int = 3, preview_only: bool = False) -> list:
-    """搜索相似文档"""
-    logger.info(f"搜索文档，问题：{query}")
-    
-    # 生成查询向量
-    query_vector = embeddings_model.encode([query])[0]
-    
-    # 在Oracle中搜索
-    with OracleVectorStore() as vector_store:
-        try:
-            results = vector_store.search_vectors(
-                query_vector=query_vector,
-                top_k=top_k,
-                preview_only=preview_only,
-                similarity_threshold=0.99  # 放宽阈值，允许更多的匹配结果
+def get_uploaded_files():
+    """获取已上传的文件列表"""
+    return list(UPLOAD_DIR.glob("*.*"))
+
+def vectorize_document(file_path):
+    """向量化文档"""
+    try:
+        content = read_file_content(file_path)
+        vector = embeddings_model.encode([content])[0]
+        documents = [{"file_path": str(file_path), "content": content}]
+        
+        with OracleVectorStore() as vector_store:
+            vector_store.add_vectors([vector], documents)
+        return True
+    except Exception as e:
+        logger.error(f"向量化失败: {str(e)}")
+        return False
+
+def parse_document_to_json(file_path):
+    """解析文档为结构化JSON"""
+    try:
+        # 读取文件内容
+        content = read_file_content(file_path)
+        if not content:
+            logger.error(f"无法读取文件内容: {file_path}")
+            return None
+            
+        # 使用解析器处理
+        parser = MedicalRecordParser()
+        structured_data = parser.parse_medical_record(content)
+        
+        # 如果返回的是错误信息，返回 None
+        if 'error' in structured_data:
+            logger.error(f"解析失败: {structured_data['error']}")
+            return None
+            
+        # 保存到 JSON 存储
+        with OracleJsonStore() as json_store:
+            json_store.add_document(
+                file_path=str(file_path),
+                content=content,
+                structured_data=structured_data
             )
-            return results
-        except Exception as e:
-            logger.error(f"搜索错误: {str(e)}")
-            st.error(f"搜索错误: {str(e)}")
+            
+        return structured_data
+        
+    except Exception as e:
+        logger.error(f"JSON解析失败: {str(e)}")
+        return None
+
+def search_similar_documents(query: str, top_k: int = 3):
+    """向量搜索并使用 GPT 分析最相关的文档"""
+    try:
+        # 1. 向量搜索
+        vector = embeddings_model.encode([query])[0]
+        with OracleVectorStore() as vector_store:
+            results = vector_store.search_vectors([vector], top_k=top_k)
+        
+        if not results:
             return []
 
-def generate_answer(query: str, context: str) -> str:
-    """生成AI回答"""
-    try:
-        # 使用指定的API key和base_url
+        # 2. 使用 GPT 分析最相关的文档
+        best_match = results[0]  # 取相似度最高的文档
+        
+        prompt = f"""
+        基于以下医疗文档内容，回答问题：{query}
+
+        文档内容：
+        {best_match['content']}
+
+        请提供详细的专业分析和答案。如果文档内容与问题无关，请明确指出。
+        """
+
+        # 使用新版 OpenAI API
         client = openai.OpenAI(
             api_key="sk-1pUmQlsIkgla3CuvKTgCrzDZ3r0pBxO608YJvIHCN18lvOrn",
             base_url="https://api.chatanywhere.tech/v1"
@@ -190,72 +144,262 @@ def generate_answer(query: str, context: str) -> str:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "你是一个专业的助手。请基于提供的上下文信息回答问题。如果无法从上下文中找到答案，请明确说明。"},
-                {"role": "user", "content": f"上下文信息:\n{context}\n\n问题: {query}"}
-            ]
+                {"role": "system", "content": "你是一个专业的医疗助手，擅长分析医疗文档并提供准确的答案。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
         )
-        return response.choices[0].message.content
+
+        # 3. 将 GPT 分析结果添加到最相关的文档中
+        best_match['gpt_analysis'] = response.choices[0].message.content
+        
+        # 返回所有检索结果，但只有最相关的文档包含 GPT 分析
+        return results
+
     except Exception as e:
-        st.error(f"生成回答时发生错误: {str(e)}")
-        return "抱歉，生成回答时出现错误。"
+        logger.error(f"搜索文档时发生错误: {str(e)}")
+        return []
+
+def analyze_query_with_gpt(query: str) -> Dict[str, Any]:
+    """使用 GPT 分析问题并提取搜索关键词"""
+    try:
+        client = openai.OpenAI(
+            api_key="sk-1pUmQlsIkgla3CuvKTgCrzDZ3r0pBxO608YJvIHCN18lvOrn",
+            base_url="https://api.chatanywhere.tech/v1"
+        )
+        
+        prompt = f"""
+        请分析以下医疗相关的问题，提取关键信息并构造数据库查询条件。
+        
+        问题：{query}
+        
+        请返回一个JSON格式的结果，包含以下字段：
+        1. keywords: 搜索关键词列表
+        2. fields: 应该在哪些字段中搜索（例如：basic_information, chief_complaint, diagnosis等）
+        3. search_type: 搜索类型（exact精确匹配还是fuzzy模糊匹配）
+        
+        示例返回格式：
+        {{
+            "keywords": ["发烧", "咳嗽"],
+            "fields": ["chief_complaint", "present_illness_history"],
+            "search_type": "fuzzy"
+        }}
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "你是一个专业的医疗信息检索专家，帮助构造精确的搜索条件。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result
+        
+    except Exception as e:
+        logger.error(f"GPT分析查询失败: {str(e)}")
+        return None
+
+def search_json_documents(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    """基于GPT分析结果搜索文档"""
+    try:
+        # 1. 使用GPT分析查询
+        analysis = analyze_query_with_gpt(query)
+        if not analysis:
+            return []
+            
+        logger.info(f"GPT分析结果: {json.dumps(analysis, ensure_ascii=False)}")
+        
+        # 2. 构造Oracle JSON查询
+        with OracleJsonStore() as json_store:
+            search_conditions = []
+            
+            # 为每个字段构造查询条件
+            for field in analysis['fields']:
+                for keyword in analysis['keywords']:
+                    if analysis['search_type'] == 'exact':
+                        condition = f"JSON_EXISTS(doc_content, '$.structured_data.{field}?(@ == \"{keyword}\")')"
+                    else:
+                        condition = f"JSON_EXISTS(doc_content, '$.structured_data.{field}?(@ like_regex \"{keyword}\" flag \"i\")')"
+                    search_conditions.append(condition)
+            
+            # 组合查询条件
+            where_clause = " OR ".join(search_conditions)
+            
+            search_sql = f"""
+                SELECT d.file_path,
+                       d.doc_content,
+                       1 as relevance
+                FROM document_json d
+                WHERE {where_clause}
+                FETCH FIRST :1 ROWS ONLY
+            """
+            
+            logger.info(f"执行SQL查询: {search_sql}")
+            logger.info(f"查询参数: top_k={top_k}")
+            
+            # 先获取所有文档，看看数据库中有什么
+            check_sql = "SELECT file_path, doc_content FROM document_json"
+            all_docs = json_store.execute_search(check_sql, [])
+            logger.info(f"数据库中的文档数量: {len(all_docs)}")
+            for doc in all_docs:
+                logger.info(f"文档路径: {doc['file_path']}")
+                logger.info(f"文档内容: {json.dumps(doc['content'], ensure_ascii=False)}")
+            
+            # 执行实际查询
+            results = json_store.execute_search(search_sql, [top_k])
+            logger.info(f"查询结果数量: {len(results)}")
+            return results
+            
+    except Exception as e:
+        logger.error(f"JSON文档搜索失败: {str(e)}")
+        return []
 
 def main():
-    st.title("电子病历问答系统")
+    st.title("医疗病历处理系统")
     
-    # 初始化session state
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # 侧边栏：功能选择
+    with st.sidebar:
+        st.header("功能选择")
+        mode = st.radio(
+            "选择功能",
+            ["文档管理", "向量检索", "结构化检索"]
+        )
     
-    if "file_processed" not in st.session_state:
-        st.session_state.file_processed = False
-    
-    # 文件上传部分
-    handle_file_upload()
-    
-    # 显示历史消息
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    
-    # 用户输入
-    if prompt := st.chat_input("请输入您的问题:"):
-        # 添加用户问题到历史记录
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    if mode == "文档管理":
+        st.header("文档管理")
         
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        # 批量文件上传部分
+        uploaded_files = st.file_uploader(
+            "上传病历文档（可多选）", 
+            type=["txt", "docx", "pdf"],
+            accept_multiple_files=True
+        )
         
-        with st.chat_message("assistant"):
-            with st.spinner("正在搜索相关内容..."):
-                # 搜索相关文档
-                results = search_similar_documents(prompt, top_k=1, preview_only=False)
+        if uploaded_files:
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.write(f"已选择 {len(uploaded_files)} 个文件")
+            with col2:
+                if st.button("保存所有文档"):
+                    for uploaded_file in uploaded_files:
+                        with st.spinner(f"正在保存 {uploaded_file.name}..."):
+                            file_path = save_uploaded_file(uploaded_file)
+                            st.success(f"已保存: {uploaded_file.name}")
+        
+        # 显示已上传的文件列表
+        st.subheader("已上传的文件")
+        files = get_uploaded_files()
+        if not files:
+            st.info("暂无上传的文件")
+        else:
+            # 添加批量操作按钮
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("批量向量化"):
+                    for file in files:
+                        with st.spinner(f"正在向量化 {file.name}..."):
+                            if vectorize_document(file):
+                                st.success(f"{file.name} 向量化完成")
+                            else:
+                                st.error(f"{file.name} 向量化失败")
+            with col2:
+                if st.button("批量结构化"):
+                    for file in files:
+                        with st.spinner(f"正在结构化 {file.name}..."):
+                            structured_data = parse_document_to_json(file)
+                            if structured_data:
+                                st.success(f"{file.name} 结构化完成")
+                            else:
+                                st.error(f"{file.name} 结构化失败")
+            
+            # 显示文件列表
+            for file in files:
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(file.name)
+                with col2:
+                    if st.button("向量化", key=f"vec_{file.name}"):
+                        with st.spinner("正在向量化..."):
+                            if vectorize_document(file):
+                                st.success("向量化完成")
+                            else:
+                                st.error("向量化失败")
+                with col3:
+                    if st.button("结构化", key=f"json_{file.name}"):
+                        with st.spinner("正在解析..."):
+                            structured_data = parse_document_to_json(file)
+                            if structured_data:
+                                st.success("结构化完成")
+                                with st.expander("查看结构化数据"):
+                                    st.json(structured_data)
+                            else:
+                                st.error("结构化失败")
+    
+    elif mode == "向量检索":
+        st.header("向量检索")
+        
+        # 显示已向量化的文档列表
+        with st.expander("查看已向量化的文档", expanded=True):
+            with OracleVectorStore() as vector_store:
+                documents = vector_store.list_documents()
+                if documents:
+                    st.write("已向量化的文档：")
+                    for doc in documents:
+                        st.write(f"- {doc['file_path']} (向量数: {doc['chunk_count']})")
+                else:
+                    st.info("暂无向量化文档")
+        
+        # 搜索功能
+        query = st.text_input("请输入搜索内容")
+        if query:
+            with st.spinner("正在搜索并分析..."):
+                results = search_similar_documents(query, top_k=3)
                 
-                if not results:
-                    error_message = "未找到任何相关文档。请确认：\n1. 文档是否已上传\n2. 患者姓名是否正确\n3. 问题是否准确"
-                    st.warning(error_message)
-                    st.session_state.messages.append({"role": "assistant", "content": error_message})
-                    return
-                
-                # 获取最相关的文档
-                result = results[0]
-                similarity_score = 1 - result['similarity']
-                
-                # 显示匹配的文档信息
-                st.info(f"匹配文档: {result['file_path']} (相似度: {similarity_score:.2%})")
-                
-                if similarity_score < 0.5:
-                    st.warning("⚠️ 注意：当前文档的相似度较低，回答可能不够准确。")
-                
-                # 生成AI回答
-                with st.spinner("正在生成回答..."):
-                    answer = generate_answer(prompt, result['content'])
-                    st.markdown(answer)
+                if results:
+                    # 显示最相关文档的 GPT 分析结果
+                    st.subheader("GPT 分析结果")
+                    st.write(results[0]['gpt_analysis'])
                     
-                    # 保存助手回答到历史记录
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": answer
-                    })
+                    # 显示所有相关文档
+                    st.subheader("相关文档")
+                    for i, result in enumerate(results, 1):
+                        similarity = 1 - result['similarity']
+                        with st.expander(f"文档 {i}: {result['file_path']} (相似度: {similarity:.2%})"):
+                            st.write(result['content'])
+                else:
+                    st.warning("未找到相关文档")
+    
+    else:  # 结构化检索
+        st.header("结构化检索")
+        query = st.text_input("请输入查询内容")
+        
+        if query:
+            with st.spinner("正在分析查询并搜索..."):
+                # 显示数据库中的所有文档
+                with OracleJsonStore() as json_store:
+                    check_sql = "SELECT file_path, doc_content FROM document_json"
+                    all_docs = json_store.execute_search(check_sql, [])
+                    st.write(f"数据库中共有 {len(all_docs)} 个文档")
+                    
+                    if all_docs:
+                        with st.expander("查看所有文档"):
+                            for doc in all_docs:
+                                st.write(f"文档: {doc['file_path']}")
+                                st.json(doc['content'])
+                
+                # 执行搜索
+                results = search_json_documents(query, top_k=3)
+                
+                if results:
+                    st.subheader("搜索结果")
+                    for i, result in enumerate(results, 1):
+                        with st.expander(f"文档 {i}: {result['file_path']}"):
+                            st.json(result['content'])
+                else:
+                    st.warning("未找到相关文档")
 
 if __name__ == "__main__":
     main()

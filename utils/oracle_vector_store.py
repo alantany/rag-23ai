@@ -118,57 +118,34 @@ class OracleVectorStore:
                 connection.commit()
                 logger.info("向量和文档添加完成")
 
-    def search_vectors(self, query_vector: np.ndarray, top_k: int = 5, preview_only: bool = False, similarity_threshold: float = 0.99) -> List[Dict[str, Any]]:
-        """
-        搜索相似文档
-        """
-        logger.info(f"搜索相似文档, top_k={top_k}")
-        query_vector_str = '[' + ','.join(map(str, query_vector.tolist())) + ']'
-        
+    def search_vectors(self, query_vectors: List[np.ndarray], top_k: int = 3) -> List[Dict[str, Any]]:
+        """搜索与查询向量最相似的文档"""
+        results = []
         with self.pool.acquire() as connection:
             with connection.cursor() as cursor:
-                if preview_only:
-                    content_col = "DBMS_LOB.SUBSTR(d.content, 500, 1) as content"
-                else:
-                    content_col = "d.content"
-                
-                # 简化后的SQL，只按相似度排序
-                search_sql = f"""
-                    WITH query_vector AS (
-                        SELECT VECTOR(:1) as qv FROM DUAL
-                    )
-                    SELECT 
-                        d.file_path,
-                        {content_col},
-                        d.metadata,
-                        VECTOR_DISTANCE(d.vector, qv) as similarity
-                    FROM document_vectors d, query_vector
-                    ORDER BY similarity
-                    FETCH FIRST :2 ROWS ONLY
-                """
-                
-                params = [query_vector_str, top_k]
-                logger.info(f"执行向量搜索SQL: \n{search_sql}")
-                
-                cursor.execute(search_sql, params)
-                
-                results = []
-                for row in cursor:
-                    similarity = 1 - row[3]  # 转换为相似度分数
-                    logger.info(f"搜索结果: 文件={row[0]}, 相似度={similarity:.2%}")
+                for query_vector in query_vectors:
+                    # 确保 query_vector 是一个 NumPy 数组
+                    if isinstance(query_vector, list):
+                        query_vector = np.array(query_vector)
                     
-                    # 处理CLOB类型
-                    content = str(row[1].read()) if row[1] else ""
-                    metadata = str(row[2].read()) if row[2] else "{}"
+                    query_vector_str = '[' + ','.join(map(str, query_vector.tolist())) + ']'
                     
-                    results.append({
-                        'file_path': row[0],
-                        'content': content,
-                        'metadata': json.loads(metadata),
-                        'similarity': row[3]
-                    })
-                
-                return results
+                    search_sql = """
+                        SELECT file_path, content, vector, 
+                               (1 - (vector <=> :1)) AS similarity
+                        FROM document_vectors
+                        ORDER BY similarity DESC
+                        FETCH FIRST :2 ROWS ONLY
+                    """
+                    cursor.execute(search_sql, [query_vector_str, top_k])
+                    
+                    for row in cursor:
+                        results.append({
+                            'file_path': row[0],
+                            'content': row[1],
+                            'similarity': row[3]
+                        })
+        return results
 
     def delete_document(self, file_path: str):
         """删除指定文档的所有向量"""
