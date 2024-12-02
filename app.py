@@ -41,7 +41,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 CACHE_DIR = Path("json_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# 使用 st.cache_resource 缓存模型，并隐藏加载状态
+# 使用 st.cache_resource 缓存模型，并隐藏载状态
 @st.cache_resource(show_spinner=False)
 def load_embeddings_model():
     """加载向量化模型（使用本地缓存）"""
@@ -187,7 +187,7 @@ class MedicalRecordParser:
     "主诉": "主要症状",
     "现病史": ["症状1", "症状2"],
     "入院诊断": ["诊断1", "诊断2"],
-    "出院诊断": ["诊断1", "诊断2"],
+    "出院诊断": ["断1", "诊断2"],
     "生命体征": {{
         "体温": "包含单位",
         "血压": "包含单位"
@@ -283,7 +283,7 @@ def parse_document_to_json(file_path):
                 result = json_store.execute_search(check_sql, [str(file_path)])
                 doc_exists = result[0]['count'] > 0 if result else False
                 
-                # 将数据转换为JSON字符串
+                # 将数据转为JSON字符串
                 doc_json_str = json.dumps(structured_data, ensure_ascii=False)
                 
                 if doc_exists:
@@ -344,10 +344,10 @@ def search_similar_documents(query: str, top_k: int = 3):
         文档内容：
         {best_match['content']}
 
-        请提供详细的专业分析和答案。如果文档内容与问题无关，请明确指出。
+        请提供详细专业分析和答案。如果文档内容与问题无关，请明确指出。
         """
 
-        # 使用新版 OpenAI API
+        # 使用新 OpenAI API
         client = openai.OpenAI(
             api_key=OPENAI_API_KEY,
             base_url=OPENAI_API_BASE
@@ -373,26 +373,114 @@ def search_similar_documents(query: str, top_k: int = 3):
         return []
 
 def analyze_query_with_gpt(query_text):
-    """使用GPT分析查询意图"""
+    """使用GPT分析查询意图并生成Oracle 23c JSON查询条件"""
     try:
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'), base_url=os.getenv('OPENAI_API_BASE'))
         
-        messages = [
-            {"role": "system", "content": """你是一个医疗文档查询分析器。
-分析用户的查询，提取关键信息：
-1. 如果查询涉及患者姓名，请提取完整的姓名（如"马某某"）
-2. 如果查询涉及性别，请提取"男"或"女"
-3. 如果涉及其他医疗信息，提取关键词
-
-请用JSON格式返回，格式如下：
+        # 提供完整的JSON结构信息
+        json_structure = """
 {
-    "keywords": ["提取的关键词"],
-    "search_type": "exact"
-}
+    "患者姓名": "姓名",
+    "性别": "男/女",
+    "年龄": "数字",
+    "入院日期": "YYYY-MM-DD",
+    "出院日期": "YYYY-MM-DD",
+    "主诉": "主要症状",
+    "现病史": ["症状1", "症状2"],
+    "入院诊断": ["诊断1", "诊断2"],
+    "出院诊断": ["诊断1", "诊断2"],
+    "生命体征": {
+        "体温": "包含单位",
+        "血压": "包含单位"
+    },
+    "生化指标": {
+        "白细胞": "值和单位",
+        "淋巴细胞百分比": "值和单位",
+        "中性粒细胞百分比": "值和单位",
+        "血红蛋白": "值和单位",
+        "血小板": "值和单位"
+    },
+    "诊疗经过": "治疗过程描述",
+    "出院医嘱": ["医嘱1", "医嘱2"]
+}"""
+        
+        messages = [
+            {"role": "system", "content": f"""你是一个Oracle 23c JSON查询专家。基于以下的JSON文档结构，帮助生成准确的Oracle JSON查询条件。
 
-示例：
-问题："马某某的性别是什么？"
-返回：{"keywords": ["马某某", "性别"], "search_type": "exact"}"""},
+文档结构：
+{json_structure}
+
+数据库信息：
+- 使用Oracle Database 23c
+- 表名：DOCUMENT_JSON
+- 字段：doc_info (VARCHAR2), doc_json (JSON)
+- JSON数据存储在doc_json字段中
+
+Oracle 23c JSON查询特性：
+1. 使用 JSON_EXISTS 进行条件匹配
+2. 使用 JSON_VALUE 提取单个值
+3. 使用 JSON_QUERY 提取JSON数组或对象
+4. 支持点号访问嵌套属性
+5. 支持数组索引访问
+6. 支持条件过滤：?(@ == "value")
+
+你的任务是：
+1. 理解用户的自然语言查询
+2. 根据文档结构和Oracle 23c特性，生成最优的查询条件
+3. 返回格式为JSON：
+{{
+    "query_type": "查询类型",
+    "conditions": ["Oracle JSON查询条件"],
+    "fields": ["需要返回的字段"],
+    "keywords": ["关键词"]
+}}
+
+示例1：
+输入："马某某的住院相关的信息"
+输出：
+{{
+    "query_type": "住院信息",
+    "conditions": [
+        "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
+        "JSON_EXISTS(doc_json, '$.入院日期')",
+        "JSON_EXISTS(doc_json, '$.出院日期')",
+        "JSON_EXISTS(doc_json, '$.住院天数')"
+    ],
+    "fields": ["入院日期", "出院日期", "住院天数"],
+    "keywords": ["马某某"]
+}}
+
+示例2：
+输入："查看马某某的淋巴细胞比例"
+输出：
+{{
+    "query_type": "检验结果",
+    "conditions": [
+        "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
+        "JSON_EXISTS(doc_json, '$.生化指标.淋巴细胞百分比')"
+    ],
+    "fields": ["生化指标.淋巴细胞百分比"],
+    "keywords": ["马某某", "淋巴细胞百分比"]
+}}
+
+示例3：
+输入："马某某的所有血液相关指标"
+输出：
+{{
+    "query_type": "检验结果",
+    "conditions": [
+        "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
+        "(JSON_EXISTS(doc_json, '$.生化指标.白细胞') OR JSON_EXISTS(doc_json, '$.生化指标.血红蛋白') OR JSON_EXISTS(doc_json, '$.生化指标.血小板'))"
+    ],
+    "fields": [
+        "生化指标.白细胞",
+        "生化指标.血红蛋白",
+        "生化指标.血小板",
+        "生化指标.淋巴细胞百分比",
+        "生化指标.中性粒细胞百分比"
+    ],
+    "keywords": ["马某某"]
+}}"""},
             {"role": "user", "content": query_text}
         ]
         
@@ -409,57 +497,112 @@ def analyze_query_with_gpt(query_text):
         logger.error(f"GPT分析查询失败: {str(e)}")
         return None
 
-def search_json_documents(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
-    """基于GPT分析结果搜索文档"""
+# 配置常量
+TOP_K = 5  # 搜索结果返回的最大数量
+
+def normalize_medical_term(query_text):
+    """使用 GPT 将用户查询的指标名称标准化"""
     try:
-        # 1. 使用GPT分析查询
-        analysis = analyze_query_with_gpt(query)
-        if not analysis:
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'), base_url=os.getenv('OPENAI_API_BASE'))
+        
+        messages = [
+            {"role": "system", "content": """你是一个医疗指标名称标准化专家。
+请将用户查询中的指标名称转换为标准的医疗指标名称。
+
+规则：
+1. 如果查询中包含某个检验指标的同义词或近义词，返回标准名称
+2. 如果不确定，返回原始词语
+3. 返回格式为 JSON：{"standard_term": "标准名称"}
+
+示例：
+输入："淋巴细胞比例"
+输出：{"standard_term": "淋巴细胞百分比"}
+
+输入："白细胞计数"
+输出：{"standard_term": "白细胞"}
+
+输入："血红蛋白含量"
+输出：{"standard_term": "血红蛋白"}"""},
+            {"role": "user", "content": query_text}
+        ]
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.1
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result.get('standard_term', query_text)
+        
+    except Exception as e:
+        logger.error(f"指标名称标准化失败: {str(e)}")
+        return query_text
+
+def search_documents(query_text):
+    """基于GPT生成的查询条件搜索文档"""
+    try:
+        # 使用GPT分析查询意图并生成查询条件
+        analysis_result = analyze_query_with_gpt(query_text)
+        logger.info(f"GPT分析结果: {json.dumps(analysis_result, ensure_ascii=False)}")
+        
+        if not analysis_result or 'conditions' not in analysis_result:
+            logger.error("GPT分析结果格式错误")
             return []
             
-        logger.info(f"GPT分析结果: {json.dumps(analysis, ensure_ascii=False)}")
+        # 使用GPT生成的条件构建查询
+        conditions = analysis_result.get('conditions', [])
         
-        # 2. 构造Oracle JSON查询
+        # 组合条件（使用AND连接姓名和其他条件）
+        name_conditions = [c for c in conditions if '患者姓名' in c]
+        other_conditions = [c for c in conditions if '患者姓名' not in c]
+        
+        if name_conditions and other_conditions:
+            where_clause = f"({' OR '.join(name_conditions)}) AND ({' OR '.join(other_conditions)})"
+        else:
+            where_clause = " OR ".join(conditions) if conditions else "1=1"
+        
+        # 构建完整的查询语句
+        query = f"""
+            SELECT d.doc_info,
+                   d.doc_json,
+                   1 as relevance
+            FROM DOCUMENT_JSON d
+            WHERE {where_clause}
+            FETCH FIRST :1 ROWS ONLY
+        """
+        
+        logger.info(f"执行SQL查询: \n{query}")
+        logger.info(f"查询参数: top_k={TOP_K}")
+        
+        # 执行查询
         with OracleJsonStore() as json_store:
-            search_conditions = []
+            results = json_store.execute_search(query, [TOP_K])
             
-            # 为每个字段构造查询条件
-            for field in analysis['fields']:
-                for keyword in analysis['keywords']:
-                    if analysis['search_type'] == 'exact':
-                        condition = f"JSON_EXISTS(doc_json, '$.structured_data.{field}?(@ == \"{keyword}\")')"
-                    else:
-                        condition = f"JSON_EXISTS(doc_json, '$.structured_data.{field}?(@ like_regex \"{keyword}\" flag \"i\")')"
-                    search_conditions.append(condition)
+        if not results:
+            logger.info("未找到匹配的文档")
+            return []
             
-            # 组合查询条件
-            where_clause = " OR ".join(search_conditions)
+        # 处理查询结果
+        processed_results = []
+        for row in results:
+            try:
+                doc_json = json.loads(json.dumps(row['doc_json'], cls=DecimalEncoder))
+                processed_results.append({
+                    'doc_info': row['doc_info'],
+                    'doc_json': doc_json,
+                    'relevance': float(row['relevance'])
+                })
+            except Exception as e:
+                logger.error(f"处理文档结果时出错: {str(e)}")
+                continue
+                
+        logger.info(f"数据库的文档数量: {len(processed_results)}")
+        for result in processed_results:
+            logger.info(f"文档路径: {result['doc_info']}")
             
-            search_sql = f"""
-                SELECT d.doc_info,
-                       d.doc_json,
-                       1 as relevance
-                FROM DOCUMENT_JSON d
-                WHERE {where_clause}
-                FETCH FIRST :1 ROWS ONLY
-            """
-            
-            logger.info(f"执行SQL查询: {search_sql}")
-            logger.info(f"查询参数: top_k={top_k}")
-            
-            # 先获取所有文档，看看数据库中有什么
-            check_sql = "SELECT doc_info, doc_json FROM DOCUMENT_JSON"
-            all_docs = json_store.execute_search(check_sql, [])
-            logger.info(f"数据库的文档数量: {len(all_docs)}")
-            for doc in all_docs:
-                logger.info(f"文档路径: {doc['doc_info']}")
-                logger.info(f"文档内容: {json.dumps(doc['doc_json'], ensure_ascii=False)}")
-            
-            # 执行实际查询
-            results = json_store.execute_search(search_sql, [top_k])
-            logger.info(f"查询结果数量: {len(results)}")
-            return results
-            
+        return processed_results
+        
     except Exception as e:
         logger.error(f"JSON文档搜索失败: {str(e)}")
         return []
@@ -470,12 +613,59 @@ class DecimalEncoder(json.JSONEncoder):
             return str(obj)
         return super(DecimalEncoder, self).default(obj)
 
-def display_search_results(results):
+def generate_answer(query_text, doc_json):
+    """根据查询意图生成答案"""
+    try:
+        # 使用GPT分析查询意图
+        analysis_result = analyze_query_with_gpt(query_text)
+        if not analysis_result:
+            return None
+            
+        query_type = analysis_result.get('query_type', '')
+        fields = analysis_result.get('fields', [])
+        keywords = analysis_result.get('keywords', [])
+        
+        # 获取患者姓名
+        name = next((k for k in keywords if k in ["马某某", "周某某"]), "患者")
+        
+        # 根据字段生成答案
+        info = []
+        for field in fields:
+            if '.' in field:  # 处理嵌套字段
+                parent, child = field.split('.')
+                if parent in doc_json and child in doc_json[parent]:
+                    info.append(f"{child}是{doc_json[parent][child]}")
+            else:  # 处理顶层字段
+                if field in doc_json:
+                    info.append(f"{field}是{doc_json[field]}")
+        
+        if info:
+            if query_type:
+                return f"{name}的{query_type}：" + "，".join(info)
+            else:
+                return f"{name}的信息：" + "，".join(info)
+                
+        return None
+        
+    except Exception as e:
+        logger.error(f"生成答案失败: {str(e)}")
+        return None
+
+def display_search_results(query_text, results):
     """显示搜索结果"""
     if not results:
         st.warning("未找到相关文档")
         return
         
+    # 尝试生成精确答案
+    for result in results:
+        answer = generate_answer(query_text, result['doc_json'])
+        if answer:
+            st.success(answer)
+            return
+            
+    # 如果无法生成精确答案，则显示完整文档
+    st.warning("无法生成精确答案，显示相关文档：")
     for result in results:
         with st.expander(f"文档: {result['doc_info']} (相关度: {result['relevance']:.2f})"):
             doc_json = result['doc_json']
@@ -523,86 +713,6 @@ def display_search_results(results):
             st.subheader("出院医嘱")
             for item in doc_json.get("出院医嘱", []):
                 st.write(f"- {item}")
-
-def search_documents(query_text):
-    """搜索文档，支持结构化查询"""
-    try:
-        # 使用GPT分析查询意图
-        analysis_result = analyze_query_with_gpt(query_text)
-        logger.info(f"GPT分析结果: {json.dumps(analysis_result, ensure_ascii=False)}")
-        
-        if not analysis_result or 'keywords' not in analysis_result:
-            logger.error("GPT分析结果格式错误")
-            return []
-            
-        # 构建查询条件
-        conditions = []
-        keywords = analysis_result.get('keywords', [])
-        
-        # 根据关键词构建JSON_EXISTS条件
-        for keyword in keywords:
-            # 对于患者姓名和性别的精确匹配
-            if keyword in ["马某某", "周某某"]:  # 如果是姓名
-                conditions.append(f"JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"{keyword}\")')")
-            elif keyword in ["男", "女"]:  # 如果是性别
-                conditions.append(f"JSON_EXISTS(doc_json, '$.性别?(@ == \"{keyword}\")')")
-            elif keyword == "性别":  # 如果查询性别字段
-                conditions.append("JSON_EXISTS(doc_json, '$.性别')")
-            else:  # 其他关键词在多个字段中搜索
-                conditions.extend([
-                    f"JSON_EXISTS(doc_json, '$.主诉?(@ == \"{keyword}\")')",
-                    f"JSON_EXISTS(doc_json, '$.现病史[*]?(@ == \"{keyword}\")')",
-                    f"JSON_EXISTS(doc_json, '$.入院诊断[*]?(@ == \"{keyword}\")')",
-                    f"JSON_EXISTS(doc_json, '$.出院诊断[*]?(@ == \"{keyword}\")')"
-                ])
-        
-        # 组合所有条件
-        where_clause = " OR ".join(conditions) if conditions else "1=1"
-        
-        # 构建完整的查询语句
-        query = f"""
-            SELECT d.doc_info,
-                   d.doc_json,
-                   1 as relevance
-            FROM DOCUMENT_JSON d
-            WHERE {where_clause}
-            FETCH FIRST :1 ROWS ONLY
-        """
-        
-        logger.info(f"执行SQL查询: \n{query}")
-        logger.info(f"查询参数: top_k={TOP_K}")
-        
-        # 执行查询
-        with OracleJsonStore() as json_store:
-            results = json_store.execute_search(query, [TOP_K])
-            
-        if not results:
-            logger.info("未找到匹配的文档")
-            return []
-            
-        # 处理查询结果
-        processed_results = []
-        for row in results:
-            try:
-                doc_json = json.loads(json.dumps(row['doc_json'], cls=DecimalEncoder))
-                processed_results.append({
-                    'doc_info': row['doc_info'],
-                    'doc_json': doc_json,
-                    'relevance': float(row['relevance'])
-                })
-            except Exception as e:
-                logger.error(f"处理文档结果时出错: {str(e)}")
-                continue
-                
-        logger.info(f"数据库的文档数量: {len(processed_results)}")
-        for result in processed_results:
-            logger.info(f"文档路径: {result['doc_info']}")
-            
-        return processed_results
-        
-    except Exception as e:
-        logger.error(f"JSON文档搜索失败: {str(e)}")
-        return []
 
 def main():
     st.title("医疗病历处理系统")
@@ -722,7 +832,7 @@ def main():
                     st.info("暂无向量化文档")
         
         # 搜索功能
-        query = st.text_input("请输入搜索内容")
+        query = st.text_input("请输搜索内容")
         if query:
             with st.spinner("正在搜索并分析..."):
                 results = search_similar_documents(query, top_k=3)
@@ -771,7 +881,7 @@ def main():
                 # 显示数据库中的所有文档详细信息
                 st.subheader("📚 数据库中的所有文档")
                 if all_docs:
-                    st.write(f"📊 数据库中共有 {len(all_docs)} 个文档")
+                    st.write(f"📊 数据库中共有 {len(all_docs)} 个文��")
                     for doc in all_docs:
                         st.markdown(f"### 📄 {Path(doc['doc_info']).name}")
                         if isinstance(doc['doc_json'], dict):
@@ -851,44 +961,13 @@ def main():
                 # 搜索功能
                 st.divider()
                 st.subheader("🔍 结构化搜索")
-                query = st.text_input("请输入查询内容（例如：'查找主诉包含发热的患者' 或 '查找年龄大于60岁的高血压患者'）")
+                query = st.text_input("请输入查询内容（例如：'马某某的性别是什么？' 或 '周某某的主诉是什么？'）")
                 
                 if query:
                     with st.spinner("正在分析查询并搜索..."):
-                        results = search_json_documents(query, top_k=5)
+                        results = search_documents(query)
+                        display_search_results(query, results)  # 传入查询文本
                         
-                        if results:
-                            st.subheader("🎯 搜索结果")
-                            for i, result in enumerate(results, 1):
-                                with st.expander(f"匹配文�� {i}: {Path(result['doc_info']).name}"):
-                                    if result.get('highlights'):
-                                        st.markdown("**🔍 匹配信息**")
-                                        for highlight in result['highlights']:
-                                            st.markdown(f"*{highlight['field']}*:")
-                                            for match in highlight['matches']:
-                                                st.write(f"- {match}")
-                                    
-                                    if isinstance(result['doc_json'], dict):
-                                        data = result['doc_json']
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            st.markdown("**📋 基本信息**")
-                                            info = {
-                                                "患者": f"{data.get('患者姓名', '未知')} ({data.get('性别', '未知')}/{data.get('年龄', '未知')}岁)",
-                                                "入院日期": data.get("入院日期", "未知"),
-                                                "住院天数": data.get("住院天数", "未知")
-                                            }
-                                            st.json(info)
-                                        
-                                        with col2:
-                                            st.markdown("**🏥 主要诊断**")
-                                            if "入院诊断" in data:
-                                                for diag in data["入院诊断"][:3]:
-                                                    st.write(f"- {diag}")
-                                
-                                st.markdown("---")
-                        else:
-                            st.warning("❌ 未找到相关文档")
             except Exception as e:
                 logger.error(f"检索文档时发生错误: {str(e)}")
                 st.error(f"检索文档时发生错误: {str(e)}")
