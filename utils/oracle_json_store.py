@@ -33,7 +33,9 @@ class OracleJsonStore:
                 wait_timeout=10,
                 timeout=60,
                 retry_count=3,
-                retry_delay=2
+                retry_delay=2,
+                encoding='UTF-8',
+                nencoding='UTF-8'
             )
             logger.info("成功初始化OracleJsonStore连接池")
         except Exception as e:
@@ -56,7 +58,7 @@ class OracleJsonStore:
                 time.sleep(retry_delay)
 
     def init_schema(self):
-        """创建必要的表结构，使用 JSON 数据类型"""
+        """初始化数据库表结构，保持向量化搜索表不变"""
         with self.pool.acquire() as connection:
             with connection.cursor() as cursor:
                 # 检查表是否存在
@@ -71,57 +73,51 @@ class OracleJsonStore:
                 if not table_exists:
                     # 创建表，使用 JSON 类型
                     create_table_sql = """
-                        CREATE TABLE document_json (
+                        CREATE TABLE DOCUMENT_JSON (
                             id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                            file_path VARCHAR2(1000),
-                            doc_content JSON,
+                            doc_info VARCHAR2(1000),
+                            doc_json JSON,
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """
                     cursor.execute(create_table_sql)
                     connection.commit()
-                    logger.info("创建 document_json 表完成")
+                    logger.info("创建 DOCUMENT_JSON 表完成")
 
-    def add_document(self, file_path: str, content: str, structured_data: Dict = None):
-        """添加文档到JSON存储"""
-        logger.info(f"添加文档到JSON存储: {file_path}")
-        
-        if structured_data is None:
-            # 如果没有提供结构化数据，使用解析器处理
-            parser = MedicalRecordParser()
-            structured_data = parser.parse_medical_record(content)
-        
-        # 添加文件信息和时间戳
-        doc_json = {
-            "file_path": file_path,
-            "processed_at": datetime.now().isoformat(),
-            "structured_data": structured_data
-        }
-        
-        with self.pool.acquire() as connection:
-            with connection.cursor() as cursor:
-                insert_sql = """
-                    INSERT INTO document_json (file_path, doc_content)
-                    VALUES (:1, JSON(:2))
-                """
-                cursor.execute(insert_sql, [
-                    file_path,
-                    json.dumps(doc_json, ensure_ascii=False)
-                ])
-                connection.commit()
-                logger.info(f"文档 {file_path} 添加完成")
+    def add_document(self, doc_info: str, doc_json: Dict):
+        """添加文档到JSON存储，不影响向量化存储"""
+        try:
+            with self.pool.acquire() as connection:
+                with connection.cursor() as cursor:
+                    insert_sql = """
+                        INSERT INTO DOCUMENT_JSON (doc_info, doc_json)
+                        VALUES (:1, JSON(:2))
+                    """
+                    cursor.execute(insert_sql, [
+                        doc_info,
+                        json.dumps(doc_json, ensure_ascii=False)
+                    ])
+                    connection.commit()
+                    logger.info(f"文档 {doc_info} 添加完成")
+        except Exception as e:
+            logger.error(f"添加文档失败: {str(e)}")
+            raise
 
     def search_documents(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """搜索文档"""
         with self.pool.acquire() as connection:
             with connection.cursor() as cursor:
-                # 使用 JSON_EXISTS 和 JSON_TEXTCONTAINS 进行搜索
+                # 使用 JSON_EXISTS 进行搜索
                 search_sql = """
-                    SELECT d.file_path,
-                           d.doc_content,
+                    SELECT d.doc_info,
+                           d.doc_json,
                            1 as relevance
-                    FROM document_json d
-                    WHERE JSON_TEXTCONTAINS(d.doc_content, '$.structured_data.*', :1)
+                    FROM DOCUMENT_JSON d
+                    WHERE JSON_EXISTS(d.doc_json, '$?(@.患者姓名 == :1)')
+                       OR JSON_EXISTS(d.doc_json, '$?(@.主诉 == :1)')
+                       OR JSON_EXISTS(d.doc_json, '$.现病史[*]?(@.content == :1)')
+                       OR JSON_EXISTS(d.doc_json, '$.入院诊断[*]?(@.content == :1)')
+                       OR JSON_EXISTS(d.doc_json, '$.出院诊断[*]?(@.content == :1)')
                     FETCH FIRST :2 ROWS ONLY
                 """
                 cursor.execute(search_sql, [query, top_k])
@@ -129,8 +125,8 @@ class OracleJsonStore:
                 results = []
                 for row in cursor:
                     results.append({
-                        'file_path': row[0],
-                        'content': json.loads(row[1].read()),
+                        'doc_info': row[0],
+                        'doc_json': json.loads(row[1].read()) if hasattr(row[1], 'read') else row[1],
                         'relevance': row[2]
                     })
                 
@@ -146,27 +142,53 @@ class OracleJsonStore:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def execute_search(self, search_sql: str, params: List[Any]) -> List[Dict[str, Any]]:
-        """执行JSON搜索查询"""
-        with self.get_connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(search_sql, params)
-                
-                results = []
-                for row in cursor:
-                    # 处理 JSON 数据
-                    doc_content = row[1]
-                    if isinstance(doc_content, str):
-                        content = json.loads(doc_content)
-                    elif hasattr(doc_content, 'read'):
-                        content = json.loads(doc_content.read())
+    def execute_sql(self, sql: str, params: List[Any] = None) -> None:
+        """执行SQL语句"""
+        try:
+            with self.get_connection() as connection:
+                with connection.cursor() as cursor:
+                    if params:
+                        cursor.execute(sql, params)
                     else:
-                        content = doc_content  # 已经是字典类型
+                        cursor.execute(sql)
+                    connection.commit()
+                    logger.debug(f"SQL执行成功: {sql[:100]}...")
+        except Exception as e:
+            logger.error(f"SQL执行失败: {str(e)}")
+            raise
+
+    def execute_search(self, search_sql: str, params: List[Any] = None) -> List[Dict[str, Any]]:
+        """执行JSON搜索查询，不影响向量化搜索功能"""
+        try:
+            with self.get_connection() as connection:
+                with connection.cursor() as cursor:
+                    if params:
+                        cursor.execute(search_sql, params)
+                    else:
+                        cursor.execute(search_sql)
                     
-                    results.append({
-                        'file_path': row[0],
-                        'content': content,
-                        'relevance': row[2] if len(row) > 2 else 1.0
-                    })
-                
-                return results 
+                    columns = [col[0].lower() for col in cursor.description]
+                    results = []
+                    
+                    for row in cursor:
+                        result = {}
+                        for i, value in enumerate(row):
+                            column_name = columns[i]
+                            
+                            # 处理JSON类型的数据
+                            if column_name == 'doc_json' and value is not None:
+                                if isinstance(value, str):
+                                    result[column_name] = json.loads(value)
+                                elif hasattr(value, 'read'):
+                                    result[column_name] = json.loads(value.read())
+                                else:
+                                    result[column_name] = value
+                            else:
+                                result[column_name] = value
+                        
+                        results.append(result)
+                    
+                    return results
+        except Exception as e:
+            logger.error(f"查询执行失败: {str(e)}")
+            raise 
