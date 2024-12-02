@@ -394,6 +394,8 @@ def analyze_query_with_gpt(query_text):
         "血压": "包含单位"
     },
     "生化指标": {
+        "天冬氨酸氨基转移酶": "值和单位",
+        "丙氨酸氨基转移酶": "值和单位",
         "白细胞": "值和单位",
         "淋巴细胞百分比": "值和单位",
         "中性粒细胞百分比": "值和单位",
@@ -423,11 +425,15 @@ Oracle 23c JSON查询特性：
 4. 支持点号访问嵌套属性
 5. 支持数组索引访问
 6. 支持条件过滤：?(@ == "value")
+7. 支持键名匹配：
+   - 使用 $.生化指标.* 遍历所有指标
+   - 使用 EXISTS 和 OR 组合多个条件
 
 你的任务是：
 1. 理解用户的自然语言查询
 2. 根据文档结构和Oracle 23c特性，生成最优的查询条件
-3. 返回格式为JSON：
+3. 对于医学术语，考虑同义词和简写（如"转氨酶"可能指"天冬氨酸氨基转移酶"或"丙氨酸氨基转移酶"）
+4. 返回格式为JSON：
 {{
     "query_type": "查询类型",
     "conditions": ["Oracle JSON查询条件"],
@@ -436,18 +442,16 @@ Oracle 23c JSON查询特性：
 }}
 
 示例1：
-输入："马某某的住院相关的信息"
+输入："马某某的转氨酶指标"
 输出：
 {{
-    "query_type": "住院信息",
+    "query_type": "检验结果",
     "conditions": [
         "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
-        "JSON_EXISTS(doc_json, '$.入院日期')",
-        "JSON_EXISTS(doc_json, '$.出院日期')",
-        "JSON_EXISTS(doc_json, '$.住院天数')"
+        "(JSON_EXISTS(doc_json, '$.生化指标.天冬氨酸氨基转移酶') OR JSON_EXISTS(doc_json, '$.生化指标.丙氨酸氨基转移酶'))"
     ],
-    "fields": ["入院日期", "出院日期", "住院天数"],
-    "keywords": ["马某某"]
+    "fields": ["生化指标.天冬氨酸氨基转移酶", "生化指标.丙氨酸氨基转移酶"],
+    "keywords": ["马某某", "转氨酶"]
 }}
 
 示例2：
@@ -464,20 +468,18 @@ Oracle 23c JSON查询特性：
 }}
 
 示例3：
-输入："马某某的所有血液相关指标"
+输入："马某某的血液相关指标"
 输出：
 {{
     "query_type": "检验结果",
     "conditions": [
         "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
-        "(JSON_EXISTS(doc_json, '$.生化指标.白细胞') OR JSON_EXISTS(doc_json, '$.生化指标.血红蛋白') OR JSON_EXISTS(doc_json, '$.生化指标.血小板'))"
+        "(JSON_EXISTS(doc_json, '$.生化指标.血红蛋白') OR JSON_EXISTS(doc_json, '$.生化指标.血小板'))"
     ],
     "fields": [
         "生化指标.白细胞",
         "生化指标.血红蛋白",
-        "生化指标.血小板",
-        "生化指标.淋巴细胞百分比",
-        "生化指标.中性粒细胞百分比"
+        "生化指标.血小板"
     ],
     "keywords": ["马某某"]
 }}"""},
@@ -881,7 +883,7 @@ def main():
                 # 显示数据库中的所有文档详细信息
                 st.subheader("📚 数据库中的所有文档")
                 if all_docs:
-                    st.write(f"📊 数据库中共有 {len(all_docs)} 个文��")
+                    st.write(f"📊 数据库中共有 {len(all_docs)} 个文档")
                     for doc in all_docs:
                         st.markdown(f"### 📄 {Path(doc['doc_info']).name}")
                         if isinstance(doc['doc_json'], dict):
