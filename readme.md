@@ -29,19 +29,19 @@
 #### 数据模型
 表结构设计:
 ```sql
-CREATE TABLE document_vectors (
-    id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    file_path VARCHAR2(1000),
-    content CLOB,
-    vector VECTOR(384),  -- 使用Oracle原生向量类型
-    metadata CLOB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE DOCUMENT_VECTORS (
+    ID NUMBER NOT NULL PRIMARY KEY,
+    FILE_PATH VARCHAR2(1000),
+    CONTENT CLOB,
+    VECTOR VECTOR(384, *),
+    METADATA CLOB,
+    CREATED_AT TIMESTAMP(6)
 );
 
 -- 创建向量索引
-CREATE INDEX vector_idx ON document_vectors(vector) 
+CREATE INDEX vector_idx ON DOCUMENT_VECTORS(VECTOR) 
 INDEXTYPE IS VECTOR_INDEXTYPE 
-PARAMETERS('VECTOR_DIM=384 DISTANCE_METRIC=COSINE');
+PARAMETERS('VECTOR_CONFIG=(DIMENSION(384), DISTANCE_METRIC(COSINE))');
 ```
 
 #### 向量化过程
@@ -62,7 +62,7 @@ vectors = model.encode(text_chunks)
 ```sql
 SELECT file_path, content,
        (1 - (vector <=> :query_vector)) as similarity
-FROM document_vectors
+FROM DOCUMENT_VECTORS
 ORDER BY similarity DESC
 FETCH FIRST :top_k ROWS ONLY;
 ```
@@ -82,59 +82,58 @@ FETCH FIRST :top_k ROWS ONLY;
 ```sql
 -- JSON文档表
 CREATE TABLE DOCUMENT_JSON (
-    id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    doc_info VARCHAR2(500),
-    doc_json JSON,
-    content CLOB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ID NUMBER NOT NULL PRIMARY KEY,
+    DOC_INFO VARCHAR2(500),
+    DOC_JSON JSON,
+    CONTENT CLOB
 );
 
--- 创建全文索引
-BEGIN
-    ctx_ddl.create_preference('my_lexer', 'CHINESE_VGRAM_LEXER');
-END;
-/
-
-CREATE INDEX DOC_CONTENT_IDX ON DOCUMENT_JSON(content)
-INDEXTYPE IS CTXSYS.CONTEXT
-PARAMETERS('
-    LEXER my_lexer
-    SYNC (ON COMMIT)
-');
+-- 创建JSON索引
+CREATE INDEX json_content_idx ON DOCUMENT_JSON(CONTENT)
+INDEXTYPE IS CTXSYS.CONTEXT;
 ```
 
 #### JSON结构示例
 ```json
 {
-    "患者姓名": "张某",
+    "患者姓名": "张某某",
     "性别": "男",
-    "年龄": "45",
-    "入院日期": "2023-01-01",
-    "出院日期": "2023-01-10",
+    "年龄": 45,
+    "入院日期": "2024-01-01",
+    "出院日期": "2024-01-10",
     "主诉": "发热3天",
     "现病史": [
-        {
-            "time": "2023-01-01",
-            "content": "出现发热症状"
-        }
+        "发热",
+        "咳嗽",
+        "乏力"
     ],
     "入院诊断": [
-        {
-            "type": "主要诊断",
-            "content": "上呼吸道感染"
-        }
+        "上呼吸道感染",
+        "病毒性感冒"
+    ],
+    "出院诊断": [
+        "上呼吸道感染",
+        "病毒性感冒",
+        "支气管炎"
     ],
     "生命体征": {
-        "体温": "38.5",
-        "脉搏": "85",
-        "呼吸": "20",
-        "血压": "120/80"
+        "体温": "38.5℃",
+        "血压": "120/80mmHg"
     },
     "生化指标": {
-        "血常规": {
-            "白细胞": "10.5",
-            "中性粒细胞": "75%"
-        }
+        "白细胞": "10.5×10^9/L↑",
+        "血红蛋白": "135g/L",
+        "血小板": "223×10^9/L"
+    },
+    "诊疗经过": "入院后给予退热、止咳等对症治疗...",
+    "出院医嘱": [
+        "注意休息，避免受凉",
+        "规律服药，定期复查"
+    ],
+    "metadata": {
+        "import_time": "2024-12-02T13:50:59.020369",
+        "source_type": "text",
+        "last_updated": "2024-12-02T13:50:59.021829"
     }
 }
 ```
@@ -145,8 +144,8 @@ PARAMETERS('
 -- 查询特定患者的诊断信息
 SELECT doc_info, doc_json
 FROM DOCUMENT_JSON
-WHERE JSON_EXISTS(doc_json, '$.患者姓名?(@=="张某")')
-  AND JSON_EXISTS(doc_json, '$.入院诊断[*]?(@.type=="主要诊断")');
+WHERE JSON_EXISTS(doc_json, '$.患者姓名?(@=="张某某")')
+  AND JSON_EXISTS(doc_json, '$.入院诊断[*]?(@=="上呼吸道感染")');
 ```
 
 2. 全文索引查询:
@@ -160,7 +159,7 @@ ORDER BY SCORE(1) DESC;
 -- 结合JSON条件和全文搜索
 SELECT doc_info, doc_json
 FROM DOCUMENT_JSON
-WHERE JSON_EXISTS(doc_json, '$.患者姓名?(@=="张某")')
+WHERE JSON_EXISTS(doc_json, '$.患者姓名?(@=="张某某")')
   AND CONTAINS(content, 'NEAR((发热, 咳嗽), 3)') > 0;
 ```
 
@@ -169,47 +168,52 @@ WHERE JSON_EXISTS(doc_json, '$.患者姓名?(@=="张某")')
 基于文档中提取的实体关系进行图数据检索:
 
 #### 技术方案
-- 使用Oracle图数据库存储实体和关系
+- 使用Oracle关系表存储实体和关系
 - 通过GPT模型从文档中提取患者相关的实体关系
-- 使用图查询语言进行复杂关系检索
+- 使用SQL查询进行复杂关系检索
 
 #### 数据模型
 表结构设计:
 ```sql
 -- 实体表
-CREATE TABLE medical_entities (
-    entity_id NUMBER GENERATED ALWAYS AS IDENTITY,
-    entity_type VARCHAR2(50),  -- 实体类型:患者/症状/诊断/检查/用药等
-    entity_name VARCHAR2(200), -- 实体名称
-    entity_value VARCHAR2(200),-- 实体值（用于存储具体的指标值等）
-    PRIMARY KEY (entity_id)
+CREATE TABLE MEDICAL_ENTITIES (
+    ENTITY_ID NUMBER NOT NULL PRIMARY KEY,
+    ENTITY_TYPE VARCHAR2(100),
+    ENTITY_NAME VARCHAR2(1000),
+    ENTITY_VALUE CLOB,
+    DOC_REF VARCHAR2(1000),
+    CREATED_AT VARCHAR2(100)
 );
 
+-- 创建实体索引
+CREATE INDEX entity_type_idx ON MEDICAL_ENTITIES(ENTITY_TYPE);
+CREATE INDEX entity_name_idx ON MEDICAL_ENTITIES(ENTITY_NAME);
+CREATE INDEX entity_doc_ref_idx ON MEDICAL_ENTITIES(DOC_REF);
+
 -- 关系表
-CREATE TABLE medical_relations (
-    relation_id NUMBER GENERATED ALWAYS AS IDENTITY,
-    from_entity_id NUMBER,     -- 起始实体ID(患者)
-    to_entity_id NUMBER,       -- 目标实体ID
-    relation_type VARCHAR2(50),-- 关系类型
-    relation_time DATE,        -- 关系发生时间
-    doc_reference VARCHAR2(200),-- 文档引用
-    PRIMARY KEY (relation_id),
-    FOREIGN KEY (from_entity_id) REFERENCES medical_entities(entity_id),
-    FOREIGN KEY (to_entity_id) REFERENCES medical_entities(entity_id)
+CREATE TABLE MEDICAL_RELATIONS (
+    RELATION_ID NUMBER NOT NULL PRIMARY KEY,
+    FROM_ENTITY_ID NUMBER,
+    TO_ENTITY_ID NUMBER,
+    RELATION_TYPE VARCHAR2(100),
+    DOC_REFERENCE VARCHAR2(1000),
+    CREATED_AT VARCHAR2(100),
+    FOREIGN KEY (FROM_ENTITY_ID) REFERENCES MEDICAL_ENTITIES(ENTITY_ID),
+    FOREIGN KEY (TO_ENTITY_ID) REFERENCES MEDICAL_ENTITIES(ENTITY_ID)
 );
+
+-- 创建关系索引
+CREATE INDEX relation_type_idx ON MEDICAL_RELATIONS(RELATION_TYPE);
+CREATE INDEX relation_doc_ref_idx ON MEDICAL_RELATIONS(DOC_REFERENCE);
 ```
 
 #### 实体类型
 1. 基本信息实体：
+   - 患者姓名
    - 性别
    - 年龄
-   - 民族
-   - 职业
-   - 婚姻状况
    - 入院日期
    - 出院日期
-   - 住院天数
-   - 出院情况
 
 2. 主诉与诊断实体：
    - 主诉症状
@@ -218,13 +222,10 @@ CREATE TABLE medical_relations (
 
 3. 现病史实体：
    - 症状
-   - 时间点
-   - 病情变化
+   - 病情描述
 
 4. 生命体征实体：
    - 体温
-   - 脉搏
-   - 呼吸
    - 血压
 
 5. 生化指标实体：
@@ -233,21 +234,15 @@ CREATE TABLE medical_relations (
    - 参考范围
 
 6. 诊疗经过实体：
-   - 治疗措施
-   - 用药情况
-   - 检查结果
+   - 诊疗过程
+   - 出院医嘱
 
 #### 关系类型
 1. 基本信息关系：
    - HAS_GENDER(患者-性别)
    - HAS_AGE(患者-年龄)
-   - HAS_ETHNICITY(患者-民族)
-   - HAS_OCCUPATION(患者-职业)
-   - HAS_MARRIAGE(患者-婚姻状况)
    - ADMISSION_DATE(患者-入院日期)
    - DISCHARGE_DATE(患者-出院日期)
-   - HOSPITAL_STAY(患者-住院天数)
-   - DISCHARGE_STATUS(患者-出院情况)
 
 2. 主诉与诊断关系：
    - HAS_CHIEF_COMPLAINT(患者-主诉)
@@ -256,41 +251,31 @@ CREATE TABLE medical_relations (
 
 3. 现病史关系：
    - HAS_SYMPTOM(患者-症状)
-   - SYMPTOM_TIME(症状-时间)
-   - SYMPTOM_CHANGE(症状-变化)
 
 4. 生命体征关系：
    - HAS_VITAL_SIGN(患者-体征)
    - VITAL_SIGN_VALUE(体征-数值)
-   - VITAL_SIGN_TIME(体征-时间)
 
 5. 生化指标关系：
    - HAS_LAB_TEST(患者-检验)
    - LAB_TEST_VALUE(检验-结果)
-   - LAB_TEST_TIME(检验-时间)
    - LAB_TEST_REFERENCE(检验-参考值)
 
 6. 诊疗经过关系：
-   - HAS_TREATMENT(患者-治疗)
-   - HAS_MEDICATION(患者-用药)
-   - HAS_EXAMINATION(患者-检查)
-   - TREATMENT_TIME(治疗-时间)
-   - MEDICATION_TIME(用药-时间)
-   - EXAMINATION_TIME(检查-时间)
+   - HAS_TREATMENT(患者-诊疗)
+   - HAS_DISCHARGE_ADVICE(患者-医嘱)
 
-#### 图查询示例
-1. 查询患者的所有生命体征变化：
+#### 查询示例
+1. 查询患者的所有生命体征：
 ```sql
 SELECT p.entity_name as patient,
        v.entity_name as vital_sign,
-       v.entity_value as value,
-       r.relation_time
-FROM medical_entities p
-JOIN medical_relations r ON p.entity_id = r.from_entity_id
-JOIN medical_entities v ON v.entity_id = r.to_entity_id
+       v.entity_value as value
+FROM MEDICAL_ENTITIES p
+JOIN MEDICAL_RELATIONS r ON p.entity_id = r.from_entity_id
+JOIN MEDICAL_ENTITIES v ON v.entity_id = r.to_entity_id
 WHERE p.entity_type = '患者'
-  AND r.relation_type = 'HAS_VITAL_SIGN'
-ORDER BY r.relation_time;
+  AND r.relation_type = 'HAS_VITAL_SIGN';
 ```
 
 2. 查询患者的诊断和相关症状：
@@ -298,66 +283,90 @@ ORDER BY r.relation_time;
 SELECT p.entity_name as patient,
        d.entity_name as diagnosis,
        s.entity_name as symptom
-FROM medical_entities p
-JOIN medical_relations rd ON p.entity_id = rd.from_entity_id
-JOIN medical_entities d ON d.entity_id = rd.to_entity_id
-JOIN medical_relations rs ON p.entity_id = rs.from_entity_id
-JOIN medical_entities s ON s.entity_id = rs.to_entity_id
+FROM MEDICAL_ENTITIES p
+JOIN MEDICAL_RELATIONS rd ON p.entity_id = rd.from_entity_id
+JOIN MEDICAL_ENTITIES d ON d.entity_id = rd.to_entity_id
+JOIN MEDICAL_RELATIONS rs ON p.entity_id = rs.from_entity_id
+JOIN MEDICAL_ENTITIES s ON s.entity_id = rs.to_entity_id
 WHERE p.entity_type = '患者'
   AND rd.relation_type = 'HAS_ADMISSION_DIAGNOSIS'
   AND rs.relation_type = 'HAS_SYMPTOM';
 ```
 
-3. 查询患者的完整治疗过程：
-```sql
-SELECT p.entity_name as patient,
-       t.entity_name as treatment,
-       m.entity_name as medication,
-       e.entity_name as examination,
-       COALESCE(rt.relation_time, rm.relation_time, re.relation_time) as time
-FROM medical_entities p
-LEFT JOIN medical_relations rt ON p.entity_id = rt.from_entity_id AND rt.relation_type = 'HAS_TREATMENT'
-LEFT JOIN medical_entities t ON t.entity_id = rt.to_entity_id
-LEFT JOIN medical_relations rm ON p.entity_id = rm.from_entity_id AND rm.relation_type = 'HAS_MEDICATION'
-LEFT JOIN medical_entities m ON m.entity_id = rm.to_entity_id
-LEFT JOIN medical_relations re ON p.entity_id = re.from_entity_id AND re.relation_type = 'HAS_EXAMINATION'
-LEFT JOIN medical_entities e ON e.entity_id = re.to_entity_id
-WHERE p.entity_type = '患者'
-  AND p.entity_name = :patient_name
-ORDER BY time;
+## 数据导入导出
+
+系统提供了完整的数据导入导出功能，支持将数据库中的表结构和数据导出为SQL文件，并能在新环境中重新导入。
+
+### 导出功能
+
+使用 `scripts/export_data.py` 可以导出数据：
+
+```bash
+python scripts/export_data.py
 ```
 
-## 使用方法
+导出的文件将保存在 `db_export` 目录下，每个表生成一个独立的SQL文件：
+- `document_vectors_时间戳.sql`
+- `document_json_时间戳.sql`
+- `medical_entities_时间戳.sql`
+- `medical_relations_时间戳.sql`
 
-1. 上传医疗文档
-2. 系统自动进行三重处理:
-   - 结构化解析
-   - 向量化存储
-   - 关系图谱构建
-3. 在搜索框输入查询
-4. 系统自动选择最佳检索方式:
-   - 结构化字段匹配优先使用JSON检索
-   - 语义相似度查询使用向量检索
-   - 关系类查询使用图检索
+每个SQL文件包含：
+1. 表的创建语句
+2. 索引的创建语句
+3. 实际数据的INSERT语句
 
-## 部署说明
+### 导入功能
 
-1. 环境要求:
-   - Python 3.8+
-   - Oracle Database 21c+
-   - Streamlit 1.24+
+使用 `scripts/import_data.py` 可以导入数据：
 
-2. 安装依赖:
+```bash
+python scripts/import_data.py
+```
+
+导入工具会：
+1. 按照正确的顺序导入SQL文件（考虑外键依赖）
+2. 自动处理CLOB和JSON等特殊数据类型
+3. 显示详细的导入进度和结果
+
+## 环境要求
+
+1. Python 3.11
+2. Oracle Database 23ai
+3. Streamlit 1.24+
+
+## 安装部署
+
+1. 安装依赖：
 ```bash
 pip install -r requirements.txt
 ```
 
-3. 配置数据库:
+2. 配置数据库连接：
+创建 `.env` 文件并设置以下环境变量：
 ```bash
-python setup_db.py
+ORACLE_USER=your_username
+ORACLE_PASSWORD=your_password
+ORACLE_DSN=host:port/service_name
+OPENAI_API_KEY=your_api_key
+OPENAI_API_BASE=your_api_base
+OPENAI_MODEL=gpt-3.5-turbo
 ```
 
-4. 启动应用:
+3. 启动应用：
 ```bash
 streamlit run app.py
 ```
+
+## 使用说明
+
+1. 上传医疗文档
+2. 系统自动进行三重处理：
+   - 向量化存储
+   - JSON结构化解析
+   - 知识图谱构建
+3. 在搜索框输入查询
+4. 系统自动选择最佳检索方式：
+   - 语义相似度查询使用向量检索
+   - 结构化字段匹配使用JSON检索
+   - 关系类查询使用图检索
