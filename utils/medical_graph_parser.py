@@ -166,10 +166,14 @@ class MedicalGraphParser:
         else:
             current_history = []
 
+        # 获取患者姓名
+        patient_name = data.get("患者姓名", "未知")
+
         return {
+            "患者姓名": patient_name,  # 保持在顶层
             "患者": {
                 "基本信息": {
-                    "姓名": data.get("患者姓名", "未知"),
+                    "姓名": patient_name,  # 同时在嵌套结构中保留
                     "性别": data.get("性别", "未知"),
                     "年龄": str(data.get("年龄", "未知")),
                     "入院日期": data.get("入院日期", "未知"),

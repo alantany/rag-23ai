@@ -39,7 +39,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
-# 设置文档存���录
+# 设置文档存录
 UPLOAD_DIR = Path("uploaded_documents")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -192,7 +192,7 @@ class MedicalRecordParser:
     "出院日期": "YYYY-MM-DD",
     "主诉": "主要症状",
     "现病史": ["症状1", "症状2"],
-    "入诊���": ["诊断1", "诊断2"],
+    "入诊": ["诊断1", "诊断2"],
     "出院诊断": ["断1", "诊断2"],
     "生命体征": {{
         "体温": "包含单位",
@@ -399,7 +399,7 @@ Oracle 23c JSON查询特：
         "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
         "(JSON_EXISTS(doc_json, '$.生化指标.天冬氨酸氨基转移酶') OR JSON_EXISTS(doc_json, '$.生化指标.丙氨酸氨基转移酶'))"
     ],
-    "fields": ["生化��标.天冬氨酸氨基转���酶", "生化指标.丙氨酸氨基转移酶"],
+    "fields": ["生化标.天氨酸氨基转酶", "生化指标.丙氨酸氨基转移酶"],
     "keywords": ["马某某", "转氨酶"]
 }}
 
@@ -458,10 +458,10 @@ def normalize_medical_term(query_text):
         
         messages = [
             {"role": "system", "content": """你是一个医疗指标名称标准化专家。
-请将用户查询中的指标名称为标准的疗标称。
+请将用户查询中的指标名称为标准的疗标称
 
 规则：
-1. 如果查询中包含某个检验指标的同义词或近义词，返回标准名称
+1. 查询中包含某个检验指标的同义词或近义词，返回标准名称
 2. 如果不确定，返回原始词语
 3. 返回格式为 JSON：{"standard_term": "标准名称"}
 
@@ -637,7 +637,7 @@ def generate_answer(query_text, doc_json, content=None):
         # 如果没从全文中找到信息，或GPT分析失败，尝试从结构化数据中获取
         info = []
         for field in fields:
-            if '.' in field:  # ��理嵌套字段
+            if '.' in field:  # 理嵌套字段
                 parent, child = field.split('.')
                 if parent in doc_json and child in doc_json[parent]:
                     info.append(f"{child}是{doc_json[parent][child]}")
@@ -694,15 +694,27 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
                 break
         
         if not patient_name:
-            raise ValueError("未能从查询中识别出患者姓名")
+            logger.warning("未能从查询中识别出患者姓名")
+            return {
+                "query_type": "基本信息",
+                "field": "all",
+                "patient_name": None,
+                "explanation": "未能识别患者姓名"
+            }
             
         # 获取该患者的实际数据结构
         patient_data = get_patient_metadata(patient_name)
         if not patient_data:
-            raise ValueError(f"未找到患 {patient_name} 的数据")
+            logger.warning(f"未找到患者 {patient_name} 的数据")
+            return {
+                "query_type": "基本信息",
+                "field": "all",
+                "patient_name": patient_name,
+                "explanation": f"未找到患者 {patient_name} 的数据"
+            }
             
         prompt = f"""
-        请分析以下医疗询，提取查询意图和关键信息。直接返回JSON对象，不要添加任何markdown格式或代码块标记。
+        请分析以下医疗查询，提取查询意图和关键信息。直接返回JSON对象，不要添加任何markdown格式或代码块标记。
 
         查询文本：{query_text}
 
@@ -710,8 +722,8 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
         {json.dumps(patient_data, ensure_ascii=False, indent=2)}
 
         你需要分析用户的查询意图，返回一个JSON对象（不要添加任何markdown格式或代码块标记），包含以下字段：
-        - query_type: 查询类型，必须是以下之一：基本信息/主诉与诊断/现病史/生命体征/生化指标
-        - field: 具体查询的字段名
+        - query_type: 查询类型，必须��以下之一：基本信息/主诉与诊断/现病史/生命体征/生化指标/诊疗经过
+        - field: 具体查询的字段名，如果是查询整个类别，请返回"all"
         - patient_name: 患者姓名
         - explanation: 查询意图的解释
 
@@ -723,7 +735,10 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
             "explanation": "查询患者的所有基本信息"
         }}
 
-        请分析这个查询并返回JSON（不要添加markdown格式）{query_text}
+        如果是查询某个类别的所有信息（如"生化指标"、"主诉与诊断"等），请将field设置为"all"。
+        如果是查询具体的指标或症状（如"白细胞"、"血压"等），请将field设置为具体的指标名称。
+
+        请分析这个查询并返回JSON（不要添加markdown格式）
         """
 
         client = OpenAI(
@@ -742,21 +757,93 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
         )
         
         content = response.choices[0].message.content.strip()
-        if content.startswith('```'):
-            content = content[content.find('{'):content.rfind('}')+1]
-            
         logger.info(f"OpenAI API返回内容: {content}")
         
-        result = json.loads(content)
-        logger.info(f"查询意图分析结果: {json.dumps(result, ensure_ascii=False)}")
-        return result
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON解析失败: {str(e)}, 原始内容: {content if 'content' in locals() else 'N/A'}")
-        raise
+        # 尝试解析返回内容
+        try:
+            # 首先尝试直接解析
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                logger.warning("直接解析JSON失败，尝试清理内容后重新解析")
+                # 如果失败，尝试清理内容（去除可能的转义字符等）
+                cleaned_content = content.replace('\n', '').replace('\r', '').strip()
+                result = json.loads(cleaned_content)
+            
+            # 如果结果被包装在response字段中，提取内层JSON
+            if isinstance(result, dict) and "response" in result:
+                try:
+                    inner_content = result["response"]
+                    if isinstance(inner_content, str):
+                        # 清理内层JSON字符串
+                        inner_content = inner_content.replace('\n', '').replace('\r', '').strip()
+                        result = json.loads(inner_content)
+                    elif isinstance(inner_content, dict):
+                        result = inner_content
+                except json.JSONDecodeError as e:
+                    logger.error(f"解析response字段失败: {str(e)}")
+                    result = {
+                        "query_type": "基本信息",
+                        "field": "all",
+                        "patient_name": patient_name,
+                        "explanation": "解析查询意图时出现错误"
+                    }
+            
+            # 验证结果格式
+            if not isinstance(result, dict):
+                raise ValueError("返回结果不是一个有效的JSON对象")
+            
+            # 验证必要字段
+            required_fields = ["query_type", "field", "patient_name", "explanation"]
+            missing_fields = [field for field in required_fields if field not in result]
+            if missing_fields:
+                logger.warning(f"缺少必要字段: {missing_fields}")
+                for field in missing_fields:
+                    if field == "query_type":
+                        result[field] = "基本信息"
+                    elif field == "field":
+                        result[field] = "all"
+                    elif field == "patient_name":
+                        result[field] = patient_name
+                    elif field == "explanation":
+                        result[field] = "查询患者信息"
+            
+            # 验证query_type是否为有效值
+            valid_query_types = ["基本信息", "主诉与诊断", "现病史", "生命体征", "生化指标", "诊疗经过"]
+            if result["query_type"] not in valid_query_types:
+                logger.warning(f"无效的query_type: {result['query_type']}, 使用默认值")
+                result["query_type"] = "基本信息"
+            
+            # 确保patient_name与查询中识别的一致
+            if result["patient_name"] != patient_name:
+                logger.warning(f"patient_name不匹配: {result['patient_name']} != {patient_name}")
+                result["patient_name"] = patient_name
+            
+            # 处理field值
+            if result["field"] == result["query_type"] or result["field"] in valid_query_types:
+                logger.info(f"将field从 {result['field']} 修改为 all")
+                result["field"] = "all"
+            
+            logger.info(f"查询意图分析结果: {json.dumps(result, ensure_ascii=False)}")
+            return result
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败: {str(e)}, 原始内容: {content}")
+            return {
+                "query_type": "基本信息",
+                "field": "all",
+                "patient_name": patient_name,
+                "explanation": "解析查询意图时出现错误"
+            }
+            
     except Exception as e:
         logger.error(f"分析查询意图失败: {str(e)}")
-        raise
+        return {
+            "query_type": "基本信息",
+            "field": "all",
+            "patient_name": patient_name if 'patient_name' in locals() else None,
+            "explanation": "分析查询意图时出现错误"
+        }
 
 def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
     """基于图数据的搜索"""
@@ -782,7 +869,9 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
             if query_type == "基本信息":
                 if field == "all":
                     # 返回所有基本信息
-                    info = patient_info.get("基本信息", {})
+                    info = patient_info.get("患者", {}).get("基本信息", {})
+                    if not info:
+                        info = patient_info.get("基本信息", {})
                     if info:
                         result = []
                         for k, v in info.items():
@@ -793,7 +882,14 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
                             "explanation": analysis.get("explanation")
                         }}]
                 else:
-                    value = patient_info.get("基本信息", {}).get(field)
+                    # 查询特定字段
+                    value = None
+                    # 先尝试从患者.基本信息中获取
+                    info = patient_info.get("患者", {}).get("基本信息", {})
+                    if not info:
+                        # 如果没有，则从基本信息中获取
+                        info = patient_info.get("基本信息", {})
+                    value = info.get(field)
                     if value:
                         return [{"type": "answer", "data": {
                             "question": query_text,
@@ -805,8 +901,29 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
                 items = patient_info.get("主诉与诊断", [])
                 if field == "all":
                     results = []
+                    # 分类处理主诉和诊断
+                    chief_complaints = []
+                    admission_diagnoses = []
+                    discharge_diagnoses = []
                     for item in items:
-                        results.append(f"{item.get('类型')}：{item.get('内容')}")
+                        if item.get("类型") == "主诉":
+                            chief_complaints.append(item.get("内容"))
+                        elif item.get("类型") == "入院诊断":
+                            admission_diagnoses.append(item.get("内容"))
+                        elif item.get("类型") == "出院诊断":
+                            discharge_diagnoses.append(item.get("内容"))
+                    
+                    # 组织返回内容
+                    if chief_complaints:
+                        results.append("主诉：")
+                        results.extend([f"- {complaint}" for complaint in chief_complaints])
+                    if admission_diagnoses:
+                        results.append("\n入院诊断：")
+                        results.extend([f"- {diagnosis}" for diagnosis in admission_diagnoses])
+                    if discharge_diagnoses:
+                        results.append("\n出院诊断：")
+                        results.extend([f"- {diagnosis}" for diagnosis in discharge_diagnoses])
+                        
                     if results:
                         return [{"type": "answer", "data": {
                             "question": query_text,
@@ -814,32 +931,56 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
                             "explanation": analysis.get("explanation")
                         }}]
                 else:
+                    results = []
                     for item in items:
                         if field.lower() in item.get("类型", "").lower():
-                            return [{"type": "answer", "data": {
-                                "question": query_text,
-                                "answer": f"{patient_name}的{field}是：{item.get('内容')}",
-                                "explanation": analysis.get("explanation")
-                            }}]
+                            results.append(item.get("内容"))
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的{field}：\n" + "\n".join([f"- {r}" for r in results]),
+                            "explanation": analysis.get("explanation")
+                        }}]
             
             elif query_type == "现病史":
                 items = patient_info.get("现病史", [])
-                results = []
-                for item in items:
-                    results.append(f"{item.get('症状')}：{item.get('描述')}")
-                if results:
-                    return [{"type": "answer", "data": {
-                        "question": query_text,
-                        "answer": f"{patient_name}的现病史：\n" + "\n".join(results),
-                        "explanation": analysis.get("explanation")
-                    }}]
+                if field == "all":
+                    results = []
+                    for item in items:
+                        symptom = item.get("症状", "")
+                        description = item.get("描述", "")
+                        if description:
+                            results.append(f"- {symptom}：{description}")
+                        else:
+                            results.append(f"- {symptom}")
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的现病史：\n" + "\n".join(results),
+                            "explanation": analysis.get("explanation")
+                        }}]
+                else:
+                    results = []
+                    for item in items:
+                        if field.lower() in item.get("症状", "").lower():
+                            description = item.get("描述", "")
+                            if description:
+                                results.append(f"{item.get('症状')}：{description}")
+                            else:
+                                results.append(item.get('症状'))
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的{field}：\n" + "\n".join(results),
+                            "explanation": analysis.get("explanation")
+                        }}]
             
             elif query_type == "生命体征":
                 items = patient_info.get("生命体征", [])
                 if field == "all":
                     results = []
                     for item in items:
-                        results.append(f"{item.get('指标')}：{item.get('数值')}")
+                        results.append(f"- {item.get('指标')}：{item.get('数值')}{item.get('单位', '')}")
                     if results:
                         return [{"type": "answer", "data": {
                             "question": query_text,
@@ -851,7 +992,7 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
                         if field.lower() in item.get("指标", "").lower():
                             return [{"type": "answer", "data": {
                                 "question": query_text,
-                                "answer": f"{patient_name}的{field}是：{item.get('数值')}",
+                                "answer": f"{patient_name}的{field}是：{item.get('数值')}{item.get('单位', '')}",
                                 "explanation": analysis.get("explanation")
                             }}]
             
@@ -859,8 +1000,26 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
                 items = patient_info.get("生化指标", [])
                 if field == "all":
                     results = []
+                    # 按照参考范围分类
+                    abnormal_items = []
+                    normal_items = []
                     for item in items:
-                        results.append(f"{item.get('项目')}：{item.get('结果')}")
+                        result_str = f"- {item.get('项目')}：{item.get('结果')}{item.get('单位', '')}"
+                        if item.get('参考范围') == '异常':
+                            abnormal_items.append(result_str + " (异常)")
+                        else:
+                            normal_items.append(result_str + " (正常)")
+                    
+                    # 组织返回内容
+                    if abnormal_items:
+                        results.append("异常指标：")
+                        results.extend(abnormal_items)
+                    if normal_items:
+                        if results:  # 如果已经有异常指标，添加空行
+                            results.append("")
+                        results.append("正常指标：")
+                        results.extend(normal_items)
+                        
                     if results:
                         return [{"type": "answer", "data": {
                             "question": query_text,
@@ -872,9 +1031,50 @@ def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
                         if field.lower() in item.get("项目", "").lower():
                             return [{"type": "answer", "data": {
                                 "question": query_text,
-                                "answer": f"{patient_name}的{field}是：{item.get('结果')}",
+                                "answer": f"{patient_name}的{field}是：{item.get('结果')}{item.get('单位', '')} ({item.get('参考范围', '')})",
                                 "explanation": analysis.get("explanation")
                             }}]
+            
+            elif query_type == "诊疗经过":
+                items = patient_info.get("诊疗经过", [])
+                if field == "all":
+                    results = []
+                    # 分类处理诊疗经过和出院医嘱
+                    diagnoses = []
+                    advices = []
+                    for item in items:
+                        if item.get("类型") == "诊疗经过":
+                            diagnoses.append(item.get("内容"))
+                        elif item.get("类型") == "出院医嘱":
+                            advices.append(item.get("内容"))
+                    
+                    # 组织返回内容
+                    if diagnoses:
+                        results.append("诊疗经过：")
+                        results.extend([f"- {diagnosis}" for diagnosis in diagnoses])
+                    if advices:
+                        if results:  # 如果已经有诊疗经过，添加空行
+                            results.append("")
+                        results.append("出院医嘱：")
+                        results.extend([f"- {advice}" for advice in advices])
+                        
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的诊疗经过：\n" + "\n".join(results),
+                            "explanation": analysis.get("explanation")
+                        }}]
+                else:
+                    results = []
+                    for item in items:
+                        if field.lower() in item.get("类型", "").lower():
+                            results.append(item.get("内容"))
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的{field}：\n" + "\n".join([f"- {r}" for r in results]),
+                            "explanation": analysis.get("explanation")
+                        }}]
             
             return []
             
@@ -1069,7 +1269,7 @@ def display_parsed_documents():
                         with tab2:
                             st.json(patient_info)
                     else:
-                        st.error("无法获取患者详细信息")
+                        st.error("无获取患者详细信息")
             
     except Exception as e:
         logger.error(f"显示已解析文档失败: {str(e)}")
@@ -1207,7 +1407,7 @@ def display_structured_search():
                 for doc in all_docs:
                     if isinstance(doc['doc_json'], dict):
                         data = doc['doc_json']
-                        patient_name = data.get("患者姓名", Path(doc['doc_info']).stem)
+                        patient_name = data.get("患者名", Path(doc['doc_info']).stem)
                         
                         # 使用expander为每个患者创建折叠面板
                         with st.expander(f"📋 {patient_name}", expanded=False):
