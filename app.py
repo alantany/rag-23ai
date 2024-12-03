@@ -20,6 +20,12 @@ import hashlib
 from typing import Dict, Any, List
 from decimal import Decimal
 from openai import OpenAI
+from utils.oracle_graph_store import OracleGraphStore
+from utils.medical_graph_parser import MedicalGraphParser
+from pyvis.network import Network
+import streamlit.components.v1 as components
+import tempfile
+import networkx as nx
 
 # 加载环境变量
 load_dotenv()
@@ -33,7 +39,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
-# 设置文档存储目录
+# 设置文档存���录
 UPLOAD_DIR = Path("uploaded_documents")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -41,7 +47,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 CACHE_DIR = Path("json_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# 使用 st.cache_resource 缓存模型，并隐藏��
+# 使用 st.cache_resource 缓存模型，并隐藏
 @st.cache_resource(show_spinner=False)
 def load_embeddings_model():
     """加载向量化模型（使用本地缓存）"""
@@ -186,7 +192,7 @@ class MedicalRecordParser:
     "出院日期": "YYYY-MM-DD",
     "主诉": "主要症状",
     "现病史": ["症状1", "症状2"],
-    "入院诊断": ["诊断1", "诊断2"],
+    "入诊���": ["诊断1", "诊断2"],
     "出院诊断": ["断1", "诊断2"],
     "生命体征": {{
         "体温": "包含单位",
@@ -242,87 +248,30 @@ class MedicalRecordParser:
             logger.error(f"解析医疗记录失败: {str(e)}")
             return {"error": f"解析失败: {str(e)}"}
 
-def parse_document_to_json(file_path):
-    """解析文档为结构化JSON并生成SQL插入语句"""
+def parse_document_to_json(file):
+    """解析文档为JSON格式"""
     try:
-        # 读取文件内容
-        content = read_file_content(file_path)
-        if not content:
-            logger.error(f"无法读取文件内容: {file_path}")
-            return None
+        content = read_file_content(file)
         
-        # 检查缓存
-        cached_data = load_from_cache(file_path)
-        if cached_data:
-            logger.info("使用缓存的结构化数据")
-            structured_data = cached_data
-        else:
-            # 使用解析器处理
-            parser = MedicalRecordParser()
-            doc_info = str(file_path)
-            result = parser.parse_medical_record(content, doc_info)
-            
-            # 如果返回的是错误信息，返回 None
-            if 'error' in result:
-                logger.error(f"解析失败: {result['error']}")
-                return None
-            
-            structured_data = result['structured_data']
-            # 保存到缓存
-            save_to_cache(file_path, structured_data)
+        # 解析为JSON
+        parser = MedicalRecordParser()
+        json_result = parser.parse_medical_record(content)
         
-        # 执行SQL插入
+        # 解析为图数据
+        graph_parser = MedicalGraphParser()
+        graph_result = graph_parser.parse_to_graph(content, file.name)
+        
+        if "error" in json_result or "error" in graph_result:
+            return False
+            
+        # 保存JSON结果
         with OracleJsonStore() as json_store:
-            try:
-                # 检查文档是否已存在
-                check_sql = """
-                SELECT COUNT(*) as count 
-                FROM DOCUMENT_JSON 
-                WHERE doc_info = :1
-                """
-                result = json_store.execute_search(check_sql, [str(file_path)])
-                doc_exists = result[0]['count'] > 0 if result else False
-                
-                # 将数据转为JSON字符串
-                doc_json_str = json.dumps(structured_data, ensure_ascii=False)
-                
-                if doc_exists:
-                    # 更新现有文档
-                    update_sql = """
-                    UPDATE DOCUMENT_JSON 
-                    SET doc_json = JSON(:1)
-                    WHERE doc_info = :2
-                    """
-                    # 记录实际执行的SQL和参数
-                    logger.info("执行更新SQL: %s", update_sql)
-                    logger.info("参数1 (doc_json): %s", doc_json_str)
-                    logger.info("参数2 (doc_info): %s", str(file_path))
-                    
-                    json_store.execute_sql(update_sql, [doc_json_str, str(file_path)])
-                    logger.info("数据更新成功")
-                else:
-                    # 插入新文档
-                    insert_sql = """
-                    INSERT INTO DOCUMENT_JSON (doc_info, doc_json) 
-                    VALUES (:1, JSON(:2))
-                    """
-                    # 记录实际执行的SQL和参数
-                    logger.info("执行插入SQL: %s", insert_sql)
-                    logger.info("参数1 (doc_info): %s", str(file_path))
-                    logger.info("参数2 (doc_json): %s", doc_json_str)
-                    
-                    json_store.execute_sql(insert_sql, [str(file_path), doc_json_str])
-                    logger.info("数据插入成功")
-                
-                return structured_data
-                
-            except Exception as e:
-                logger.error(f"SQL行败: {str(e)}")
-                return None
-        
+            json_store.add_document(file.name, json_result)
+            
+        return True
     except Exception as e:
-        logger.error(f"JSON解析失败: {str(e)}")
-        return None
+        logger.error(f"解析文档失败: {str(e)}")
+        return False
 
 def search_similar_documents(query: str, top_k: int = 3):
     """向量搜索并使用 GPT 分析最相关的文档"""
@@ -365,7 +314,7 @@ def search_similar_documents(query: str, top_k: int = 3):
         # 3. 将 GPT 分析结果添加到最相关的文档中
         best_match['gpt_analysis'] = response.choices[0].message.content
         
-        # 返回所有检索结果，但只有相关的文��包含 GPT 分析
+        # 返回所有检索结果，但只有相关的文包含 GPT 分析
         return results
 
     except Exception as e:
@@ -389,7 +338,7 @@ def analyze_query_with_gpt(query_text):
     "现病史": ["症状1", "症状2"],
     "入院诊断": ["诊断1", "诊断2"],
     "出院诊断": ["诊断1", "诊断2"],
-    "生命体征": {
+    "命体征": {
         "体温": "包含单位",
         "血压": "包含单位"
     },
@@ -397,13 +346,13 @@ def analyze_query_with_gpt(query_text):
         "天冬氨酸氨基转移酶": "值和单位",
         "丙氨酸氨基转移酶": "值和单位",
         "白细胞": "值和单位",
-        "淋巴细胞百分比": "值和单位",
+        "淋巴细胞百分比": "值单位",
         "中性粒细胞百分比": "值和单位",
         "血红蛋白": "值和单位",
         "血小板": "值和单位"
     },
     "诊疗经过": "治疗过程描述",
-    "出院医嘱": ["医嘱1", "医嘱2"]
+    "出院医嘱": ["医嘱1", "医2"]
 }"""
         
         messages = [
@@ -418,12 +367,12 @@ def analyze_query_with_gpt(query_text):
 - 字段：doc_info (VARCHAR2), doc_json (JSON)
 - JSON数据存储在doc_json字段中
 
-Oracle 23c JSON查询特性：
+Oracle 23c JSON查询特：
 1. 使用 JSON_EXISTS 进行条件匹配
 2. 使用 JSON_VALUE 提取单个值
 3. 使用 JSON_QUERY 提取JSON数组或对象
 4. 支持点号访问嵌套属性
-5. 支持��组索引访问
+5. 支持组索引访问
 6. 支持条件过滤：?(@ == "value")
 7. 支持键名匹配：
    - 使用 $.生化指标.* 遍历所有指标
@@ -450,7 +399,7 @@ Oracle 23c JSON查询特性：
         "JSON_EXISTS(doc_json, '$.患者姓名?(@ == \"马某某\")')",
         "(JSON_EXISTS(doc_json, '$.生化指标.天冬氨酸氨基转移酶') OR JSON_EXISTS(doc_json, '$.生化指标.丙氨酸氨基转移酶'))"
     ],
-    "fields": ["生化指标.天冬氨酸氨基转移酶", "生化指标.丙氨酸氨基转移酶"],
+    "fields": ["生化��标.天冬氨酸氨基转���酶", "生化指标.丙氨酸氨基转移酶"],
     "keywords": ["马某某", "转氨酶"]
 }}
 
@@ -460,7 +409,7 @@ Oracle 23c JSON查询特性：
 {{
     "query_type": "检验结果",
     "conditions": [
-        "JSON_EXISTS(doc_json, '$.患���姓名?(@ == \"马某某\")')",
+        "JSON_EXISTS(doc_json, '$.患姓名?(@ == \"马某某\")')",
         "JSON_EXISTS(doc_json, '$.生化指标.淋巴细胞百分比')"
     ],
     "fields": ["生化指标.淋巴细胞百分比"],
@@ -477,7 +426,7 @@ Oracle 23c JSON查询特性：
         "(JSON_EXISTS(doc_json, '$.生化指标.血红蛋白') OR JSON_EXISTS(doc_json, '$.生化指标.血小板'))"
     ],
     "fields": [
-        "生化指标.白细胞",
+        "生指标.白细胞",
         "生化指标.血红蛋白",
         "生化指标.血小板"
     ],
@@ -509,7 +458,7 @@ def normalize_medical_term(query_text):
         
         messages = [
             {"role": "system", "content": """你是一个医疗指标名称标准化专家。
-请将用户查询中的指标名称转换为标准的医疗指标名称。
+请将用户查询中的指标名称为标准的疗标称。
 
 规则：
 1. 如果查询中包含某个检验指标的同义词或近义词，返回标准名称
@@ -538,7 +487,7 @@ def normalize_medical_term(query_text):
         return result.get('standard_term', query_text)
         
     except Exception as e:
-        logger.error(f"指标名称标准化失败: {str(e)}")
+        logger.error(f"指标名称标准化: {str(e)}")
         return query_text
 
 def search_documents(query_text):
@@ -560,7 +509,7 @@ def search_documents(query_text):
         name_conditions = [c for c in conditions if '患者姓名' in c]
         other_conditions = [c for c in conditions if '患者姓名' not in c]
         
-        # 构建JSON查询条件
+        # 构建JSON查条件
         if name_conditions and other_conditions:
             json_where = f"({' OR '.join(name_conditions)}) AND ({' OR '.join(other_conditions)})"
         else:
@@ -683,12 +632,12 @@ def generate_answer(query_text, doc_json, content=None):
                     return f"{name}的情况：{answer}"
             except Exception as e:
                 logger.error(f"GPT分析失败: {str(e)}")
-                # 如果GPT分析失败，继续尝试结构化数据
+                # 果GPT分析失败，继续尝试结构化数据
                 
-        # 如果没有从全文中找到信息，或GPT分析失败，尝试从结构化数据中获取
+        # 如果没从全文中找到信息，或GPT分析失败，尝试从结构化数据中获取
         info = []
         for field in fields:
-            if '.' in field:  # 处理嵌套字段
+            if '.' in field:  # ��理嵌套字段
                 parent, child = field.split('.')
                 if parent in doc_json and child in doc_json[parent]:
                     info.append(f"{child}是{doc_json[parent][child]}")
@@ -722,180 +671,547 @@ def display_search_results(query_text, results):
         else:
             st.warning("未找到相关信息")
 
-def main():
-    st.title("医疗病历处理系统")
-    
-    # 显示初始化进度
-    with st.spinner("正在连接数据库..."):
-        try:
-            # 初始化数据库
-            init_database()
-        except Exception as e:
-            st.error(f"数据库连接失败: {str(e)}")
-            st.info("请检查：\n1. 数据库服务是否启动\n2. 网络连接是否正常\n3. 数据库配置是否正确")
-            return
-    
-    # 加载模型（使用缓存，不会每次都下载）
-    with st.spinner("正在加载模型（如果是首次运行，可能需要下载）..."):
-        try:
-            embeddings_model = load_embeddings_model()
-            st.success("系统初始化完成！")
-        except Exception as e:
-            st.error(f"模型加载失败: {str(e)}")
-            st.info("如果是网络问题，您可以：\n1. 检查网络连接\n2. 等待一会儿再试\n3. 或者手动下载模型到 ~/.cache/torch/sentence_transformers")
-            return
-    
-    # 侧边栏：功能选择
-    with st.sidebar:
-        st.header("功能选择")
-        mode = st.radio(
-            "选择功能",
-            ["文档管理", "向量检索", "结构化检索"]
-        )
-    
-    if mode == "文档管理":
-        st.header("文档管理")
+def get_patient_metadata(patient_name: str) -> Dict[str, Any]:
+    """获取患者的实际数据结构"""
+    try:
+        with OracleGraphStore() as graph_store:
+            patient_info = graph_store.get_patient_info(patient_name)
+            if not patient_info:
+                return {}
+            return patient_info
+    except Exception as e:
+        logger.error(f"获取患者元数据失败: {str(e)}")
+        return {}
+
+def analyze_graph_query(query_text: str) -> Dict[str, Any]:
+    """使用大模型分析图数据查询意图"""
+    try:
+        # 从查询文本中提取患者姓名
+        patient_name = None
+        for name in ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"]:
+            if name in query_text:
+                patient_name = name
+                break
         
-        # 批量文件上传部分
-        uploaded_files = st.file_uploader(
-            "上传病历文档（可多选）", 
-            type=["txt", "docx", "pdf"],
-            accept_multiple_files=True
-        )
-        
-        if uploaded_files:
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.write(f"已选择 {len(uploaded_files)} 个文件")
-            with col2:
-                if st.button("保存所有文档"):
-                    for uploaded_file in uploaded_files:
-                        with st.spinner(f"正在保存 {uploaded_file.name}..."):
-                            file_path = save_uploaded_file(uploaded_file)
-                            st.success(f"已保存: {uploaded_file.name}")
-        
-        # 显示已上传的文件列表
-        st.subheader("已上传的文件")
-        files = get_uploaded_files()
-        if not files:
-            st.info("暂无上传的文件")
-        else:
-            # 添加批量操作按钮
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                if st.button("批量向量化"):
-                    for file in files:
-                        with st.spinner(f"正在向量化 {file.name}..."):
-                            if vectorize_document(file):
-                                st.success(f"{file.name} 向量化完成")
-                            else:
-                                st.error(f"{file.name} 向量化失败")
-            with col2:
-                if st.button("批量结构化"):
-                    for file in files:
-                        with st.spinner(f"正在结构化 {file.name}..."):
-                            result = parse_document_to_json(file)
-                            if result:
-                                st.success(f"{file.name} 结构化完成")
-                                with st.expander("查看结构化数据"):
-                                    st.json(result)
-                            else:
-                                st.error(f"{file.name} 结构化失败")
+        if not patient_name:
+            raise ValueError("未能从查询中识别出患者姓名")
             
-            # 显示文件列表
-            for file in files:
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(file.name)
-                with col2:
-                    if st.button("向量化", key=f"vec_{file.name}"):
-                        with st.spinner("正在向量化..."):
-                            if vectorize_document(file):
-                                st.success("向量化完成")
-                            else:
-                                st.error("向量化失败")
-                with col3:
-                    if st.button("��构化", key=f"struct_{file.name}"):
-                        with st.spinner("正在结构化..."):
-                            result = parse_document_to_json(file)
-                            if result:
-                                st.success("结构化完成")
-                                with st.expander("查看结构化数据"):
-                                    st.json(result)
-                            else:
-                                st.error("结构化失败")
-    
-    elif mode == "向量检索":
-        st.header("向量检索")
+        # 获取该患者的实际数据结构
+        patient_data = get_patient_metadata(patient_name)
+        if not patient_data:
+            raise ValueError(f"未找到患 {patient_name} 的数据")
+            
+        prompt = f"""
+        请分析以下医疗询，提取查询意图和关键信息。直接返回JSON对象，不要添加任何markdown格式或代码块标记。
+
+        查询文本：{query_text}
+
+        患者 {patient_name} 的实际数据结构如下：
+        {json.dumps(patient_data, ensure_ascii=False, indent=2)}
+
+        你需要分析用户的查询意图，返回一个JSON对象（不要添加任何markdown格式或代码块标记），包含以下字段：
+        - query_type: 查询类型，必须是以下之一：基本信息/主诉与诊断/现病史/生命体征/生化指标
+        - field: 具体查询的字段名
+        - patient_name: 患者姓名
+        - explanation: 查询意图的解释
+
+        如果是查询个人信息，应返回：
+        {{
+            "query_type": "基本信息",
+            "field": "all",
+            "patient_name": "{patient_name}",
+            "explanation": "查询患者的所有基本信息"
+        }}
+
+        请分析这个查询并返回JSON（不要添加markdown格式）{query_text}
+        """
+
+        client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_API_BASE")
+        )
         
-        # 显示已向量化的文档列表
-        with st.expander("查看已向量化的文档", expanded=True):
-            with OracleVectorStore() as vector_store:
-                documents = vector_store.list_documents()
-                if documents:
-                    st.write("已向量化的文档：")
-                    for doc in documents:
-                        st.write(f"- {doc['file_path']} (向量数: {doc['chunk_count']})")
+        response = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
+            messages=[
+                {"role": "system", "content": "你是一个专业的医疗查询分析助手。请直接返回JSON对象，不要添加任何markdown格式或代码块标记。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"}
+        )
+        
+        content = response.choices[0].message.content.strip()
+        if content.startswith('```'):
+            content = content[content.find('{'):content.rfind('}')+1]
+            
+        logger.info(f"OpenAI API返回内容: {content}")
+        
+        result = json.loads(content)
+        logger.info(f"查询意图分析结果: {json.dumps(result, ensure_ascii=False)}")
+        return result
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {str(e)}, 原始内容: {content if 'content' in locals() else 'N/A'}")
+        raise
+    except Exception as e:
+        logger.error(f"分析查询意图失败: {str(e)}")
+        raise
+
+def search_graph_data(query_text: str) -> List[Dict[str, Any]]:
+    """基于图数据的搜索"""
+    try:
+        # 使用GPT分析查询意图
+        analysis = analyze_graph_query(query_text)
+        query_type = analysis.get("query_type")
+        field = analysis.get("field")
+        patient_name = analysis.get("patient_name")
+        
+        if not all([query_type, patient_name]):
+            logger.error("查询意图分析结果不完整")
+            return []
+        
+        # 使用图数据库搜索
+        with OracleGraphStore() as graph_store:
+            # 获取患者信息
+            patient_info = graph_store.get_patient_info(patient_name)
+            if not patient_info:
+                return []
+            
+            # 根据查询类型返回结果
+            if query_type == "基本信息":
+                if field == "all":
+                    # 返回所有基本信息
+                    info = patient_info.get("基本信息", {})
+                    if info:
+                        result = []
+                        for k, v in info.items():
+                            result.append(f"{k}：{v}")
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的基本信息：\n" + "\n".join(result),
+                            "explanation": analysis.get("explanation")
+                        }}]
                 else:
-                    st.info("暂无向量化文档")
-        
-        # 搜索功能
-        query = st.text_input("输搜索内容")
-        if query:
-            with st.spinner("正在搜索并分析..."):
-                results = search_similar_documents(query, top_k=3)
-                
+                    value = patient_info.get("基本信息", {}).get(field)
+                    if value:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的{field}是{value}",
+                            "explanation": analysis.get("explanation")
+                        }}]
+            
+            elif query_type == "主诉与诊断":
+                items = patient_info.get("主诉与诊断", [])
+                if field == "all":
+                    results = []
+                    for item in items:
+                        results.append(f"{item.get('类型')}：{item.get('内容')}")
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的主诉与诊断：\n" + "\n".join(results),
+                            "explanation": analysis.get("explanation")
+                        }}]
+                else:
+                    for item in items:
+                        if field.lower() in item.get("类型", "").lower():
+                            return [{"type": "answer", "data": {
+                                "question": query_text,
+                                "answer": f"{patient_name}的{field}是：{item.get('内容')}",
+                                "explanation": analysis.get("explanation")
+                            }}]
+            
+            elif query_type == "现病史":
+                items = patient_info.get("现病史", [])
+                results = []
+                for item in items:
+                    results.append(f"{item.get('症状')}：{item.get('描述')}")
                 if results:
-                    # 显示最相关文档的 GPT 分析结果
-                    st.subheader("GPT 分析结果")
-                    st.write(results[0]['gpt_analysis'])
-                    
-                    # 显示所有相关文档
-                    st.subheader("相关文档")
-                    for i, result in enumerate(results, 1):
-                        similarity = 1 - result['similarity']
-                        with st.expander(f"文档 {i}: {result['file_path']} (相似度: {similarity:.2%})"):
-                            st.write(result['content'])
+                    return [{"type": "answer", "data": {
+                        "question": query_text,
+                        "answer": f"{patient_name}的现病史：\n" + "\n".join(results),
+                        "explanation": analysis.get("explanation")
+                    }}]
+            
+            elif query_type == "生命体征":
+                items = patient_info.get("生命体征", [])
+                if field == "all":
+                    results = []
+                    for item in items:
+                        results.append(f"{item.get('指标')}：{item.get('数值')}")
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的生命体征：\n" + "\n".join(results),
+                            "explanation": analysis.get("explanation")
+                        }}]
                 else:
-                    st.warning("未找到相关文档")
-    
-    else:  # 结构化检索
-        st.header("结构化检索")
+                    for item in items:
+                        if field.lower() in item.get("指标", "").lower():
+                            return [{"type": "answer", "data": {
+                                "question": query_text,
+                                "answer": f"{patient_name}的{field}是：{item.get('数值')}",
+                                "explanation": analysis.get("explanation")
+                            }}]
+            
+            elif query_type == "生化指标":
+                items = patient_info.get("生化指标", [])
+                if field == "all":
+                    results = []
+                    for item in items:
+                        results.append(f"{item.get('项目')}：{item.get('结果')}")
+                    if results:
+                        return [{"type": "answer", "data": {
+                            "question": query_text,
+                            "answer": f"{patient_name}的生化指标：\n" + "\n".join(results),
+                            "explanation": analysis.get("explanation")
+                        }}]
+                else:
+                    for item in items:
+                        if field.lower() in item.get("项目", "").lower():
+                            return [{"type": "answer", "data": {
+                                "question": query_text,
+                                "answer": f"{patient_name}的{field}是：{item.get('结果')}",
+                                "explanation": analysis.get("explanation")
+                            }}]
+            
+            return []
+            
+    except Exception as e:
+        logger.error(f"图数据搜索失败: {str(e)}")
+        return []
+
+def display_graph_results(results: List[Dict[str, Any]], query_text: str):
+    """显示图数据搜索结果"""
+    if not results:
+        st.warning("未找到相关信息")
+        return
         
-        # 检查数据库中的结构化文档
-        with OracleJsonStore() as json_store:
+    for result in results:
+        if result["type"] == "answer":
+            data = result["data"]
+            st.write(data["answer"])
+
+def process_graph_data(file_path: str, content: str) -> bool:
+    """处理文档的图数据"""
+    try:
+        # 只处理图数据
+        graph_parser = MedicalGraphParser()
+        graph_result = graph_parser.parse_to_graph(content, file_path)
+        
+        if "error" in graph_result:
+            return False
+            
+        return True
+    except Exception as e:
+        logger.error(f"处理图数据失败: {str(e)}")
+        return False
+
+def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
+    """使用pyvis可视化患者的属性图"""
+    try:
+        # 创建网络图
+        net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="black", directed=False)
+        
+        # 设置物理布局选项
+        net.set_options("""
+        {
+          "nodes": {
+            "font": {
+              "size": 14,
+              "face": "Microsoft YaHei"
+            }
+          },
+          "edges": {
+            "color": {
+              "color": "#666666",
+              "highlight": "#000000"
+            }
+          },
+          "physics": {
+            "enabled": true,
+            "solver": "forceAtlas2Based",
+            "forceAtlas2Based": {
+              "gravitationalConstant": -50,
+              "centralGravity": 0.01,
+              "springLength": 100,
+              "springConstant": 0.08,
+              "damping": 0.4,
+              "avoidOverlap": 0.5
+            }
+          }
+        }
+        """)
+        
+        # 添加患者节点（中心节点）
+        patient_name = patient_info.get('姓名', '未知患者')
+        st.write(f"正在处理患者: {patient_name}")  # 调试信息
+        
+        net.add_node(patient_name, 
+                    label=patient_name,
+                    color='#add8e6',  # lightblue
+                    size=30,
+                    shape='circle')
+        
+        # 添加基本信息节点
+        basic_info = patient_info.get('基本信息', {})
+        if basic_info:
+            st.write("添加基本信息节点")  # 调试信息
+            for key, value in basic_info.items():
+                node_id = f'basic_{key}'
+                net.add_node(node_id,
+                            label=f'{key}：{value}',
+                            color='#90EE90',  # lightgreen
+                            size=20,
+                            shape='box')
+                net.add_edge(patient_name, node_id, title='基本信息')
+        
+        # 添加主诉与诊断节点
+        if '主诉与诊断' in patient_info:
+            st.write("添加主诉与诊断节点")  # 调试信息
+            for i, item in enumerate(patient_info['主诉与诊断']):
+                node_id = f'diag_{i}'
+                net.add_node(node_id,
+                            label=f"{item.get('类型')}：{item.get('内容')}",
+                            color='#FFB6C1',  # lightpink
+                            size=20,
+                            shape='box')
+                net.add_edge(patient_name, node_id, title='主诉与诊断')
+        
+        # 添加现病史节点
+        if '现病史' in patient_info:
+            st.write("添加现病史节点")  # 调试信息
+            for i, item in enumerate(patient_info['现病史']):
+                node_id = f'hist_{i}'
+                net.add_node(node_id,
+                            label=f"{item.get('症状')}：{item.get('描述')}",
+                            color='#FFFFE0',  # lightyellow
+                            size=20,
+                            shape='box')
+                net.add_edge(patient_name, node_id, title='现病史')
+        
+        # 添加生命体征节点
+        if '生命体征' in patient_info:
+            st.write("添加生命体征节点")  # 调试信息
+            for i, item in enumerate(patient_info['生命体征']):
+                node_id = f'vital_{i}'
+                net.add_node(node_id,
+                            label=f"{item.get('指标')}：{item.get('数值')}",
+                            color='#F08080',  # lightcoral
+                            size=20,
+                            shape='box')
+                net.add_edge(patient_name, node_id, title='生命体征')
+        
+        # 添加生化指标节点
+        if '生化指标' in patient_info:
+            st.write("添加生化指标节点")  # 调试信息
+            for i, item in enumerate(patient_info['生化指标']):
+                node_id = f'biochem_{i}'
+                net.add_node(node_id,
+                            label=f"{item.get('项目')}：{item.get('结果')}",
+                            color='#DDA0DD',  # plum
+                            size=20,
+                            shape='box')
+                net.add_edge(patient_name, node_id, title='生化指标')
+        
+        # 创建临时文件保存HTML
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as f:
             try:
-                # 首先检查表是否存在
-                check_table_sql = """
-                SELECT COUNT(*) as count
-                FROM user_tables 
-                WHERE table_name = 'DOCUMENT_JSON'
-                """
-                result = json_store.execute_search(check_table_sql)
-                table_exists = result[0]['count'] > 0 if result else False
+                net.save_graph(f.name)
+                st.write(f"图形已保存到: {f.name}")  # 调试信息
+                return f.name
+            except Exception as e:
+                st.error(f"保存图形时出错: {str(e)}")  # 调试信息
+                raise
                 
-                if not table_exists:
-                    st.warning("数据库未初始化，请先在文档管理中上传并结构化文档")
-                    return
+    except Exception as e:
+        st.error(f"生成图形时出错: {str(e)}")  # 调试信息
+        raise
+
+def display_parsed_documents():
+    """显示已解析的文档"""
+    st.subheader("查看已解析的文档")
+    
+    try:
+        with OracleGraphStore() as graph_store:
+            patients = graph_store.get_all_patients()
+            
+            if not patients:
+                st.info("📭 数据库中暂无结构化文档，请先在文档管理中上传并结构化文档")
+                return
                 
-                # 获取所有文档
-                check_sql = """
-                SELECT doc_info, doc_json, content 
-                FROM DOCUMENT_JSON 
-                ORDER BY id DESC
-                """
-                all_docs = json_store.execute_search(check_sql)
+            st.write("已解析的文档中包含以下患者：")
+            
+            # 显示患者列表
+            for patient in patients:
+                patient_name = patient.get('姓名', '未知患者')
+                # 使用expander使每个患者的信息默认折叠
+                with st.expander(f"📋 {patient_name}", expanded=False):
+                    # 获取患者的完整信息
+                    patient_info = graph_store.get_patient_info(patient_name)
+                    if patient_info:
+                        # 创建两个标签页
+                        tab1, tab2 = st.tabs(["知识图谱", "完整数据"])
+                        
+                        with tab1:
+                            try:
+                                # 创建并显示交互式网络图
+                                html_path = visualize_patient_graph(patient_info)
+                                with open(html_path, 'r', encoding='utf-8') as f:
+                                    html_content = f.read()
+                                components.html(html_content, height=600)
+                                # 清理临时文件
+                                os.unlink(html_path)
+                            except Exception as e:
+                                st.error(f"显示图形时出错: {str(e)}")
+                        
+                        with tab2:
+                            st.json(patient_info)
+                    else:
+                        st.error("无法获取患者详细信息")
+            
+    except Exception as e:
+        logger.error(f"显示已解析文档失败: {str(e)}")
+        st.error("显示已解析文档时出现错误")
+
+def display_document_management():
+    """显示文档管理界面"""
+    st.header("文档管理")
+    
+    # 显示已上传的文档
+    st.subheader("已上传的文档")
+    files = list(UPLOAD_DIR.glob("*.*"))
+    if files:
+        for file in files:
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            with col1:
+                st.write(file.name)
+            with col2:
+                if st.button("向量化", key=f"vec_{file.name}"):
+                    with st.spinner("正在向量化..."):
+                        if vectorize_document(file):
+                            st.success("向量化成功")
+                        else:
+                            st.error("向量化失败")
+            with col3:
+                if st.button("结构化", key=f"struct_{file.name}"):
+                    with st.spinner("正在结构化..."):
+                        # 读取文件内容
+                        content = read_file_content(file)
+                        file_obj = type('FileObject', (), {
+                            'name': file.name,
+                            'type': 'application/pdf' if file.suffix == '.pdf' else 'text/plain',
+                            'read': lambda: open(file, 'rb').read()
+                        })()
+                        if parse_document_to_json(file_obj):
+                            st.success("结构化成功")
+                        else:
+                            st.error("结构化失败")
+            with col4:
+                if st.button("图数据", key=f"graph_{file.name}"):
+                    with st.spinner("正在处理图数据..."):
+                        # 读取文件内容
+                        content = read_file_content(file)
+                        if process_graph_data(file.name, content):
+                            st.success("图数据处理成功")
+                        else:
+                            st.error("图数据处理失败")
+            st.markdown("---")
+    else:
+        st.info("暂无上传的文档")
+        
+    # 文件上传部分
+    uploaded_file = st.file_uploader("上传医疗文档", type=["pdf", "docx", "txt"])
+    
+    if uploaded_file:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.write(f"已选择 {uploaded_file.name}")
+        with col2:
+            if st.button("保存文档"):
+                with st.spinner(f"正在保存 {uploaded_file.name}..."):
+                    file_path = save_uploaded_file(uploaded_file)
+                    if file_path:
+                        st.success(f"文件保存成功: {file_path}")
+                    else:
+                        st.error("文件保存失败")
+
+def display_vector_search():
+    """显示向量检索界面"""
+    st.header("向量检索")
+    
+    # 显示已向量化的文档列表
+    with st.expander("查看已向量化的文档", expanded=True):
+        with OracleVectorStore() as vector_store:
+            documents = vector_store.list_documents()
+            if documents:
+                st.write("已向量化的文档：")
+                for doc in documents:
+                    st.write(f"- {doc['file_path']} (向量数: {doc['chunk_count']})")
+            else:
+                st.info("暂无向量化文档")
+    
+    # 搜索功能
+    query = st.text_input("请输入搜索内容")
+    if query:
+        with st.spinner("正在搜索并分析..."):
+            results = search_similar_documents(query, top_k=3)
+            
+            if results:
+                # 显示最相关文档的 GPT 分析结果
+                st.subheader("GPT 分析结果")
+                st.write(results[0]['gpt_analysis'])
                 
-                # 显示数据库中的所有文档详细信息
-                st.subheader("📚 数据库中所有文档")
-                if all_docs:
-                    st.write(f"📊 数据库中共有 {len(all_docs)} 个文档")
-                    for doc in all_docs:
-                        st.markdown(f"### 📄 {Path(doc['doc_info']).name}")
-                        if isinstance(doc['doc_json'], dict):
-                            data = doc['doc_json']
-                            
-                            # 使用tabs来组织内容
+                # 显示所有相关文档
+                st.subheader("相关文档")
+                for i, result in enumerate(results, 1):
+                    similarity = 1 - result['similarity']
+                    with st.expander(f"文档 {i}: {result['file_path']} (相似度: {similarity:.2%})"):
+                        st.write(result['content'])
+            else:
+                st.warning("未找到相关文档")
+
+def display_structured_search():
+    """显示结构化检索界面"""
+    st.header("结构化检索")
+    
+    # 检查数据库中的结构化文档
+    with OracleJsonStore() as json_store:
+        try:
+            # 首先检查表是否存在
+            check_table_sql = """
+            SELECT COUNT(*) as count
+            FROM user_tables 
+            WHERE table_name = 'DOCUMENT_JSON'
+            """
+            result = json_store.execute_search(check_table_sql)
+            table_exists = result[0]['count'] > 0 if result else False
+            
+            if not table_exists:
+                st.warning("数据库未初始化，请先在文档管理中上传并结构化文档")
+                return
+            
+            # 获取所有文档
+            check_sql = """
+            SELECT doc_info, doc_json, content 
+            FROM DOCUMENT_JSON 
+            ORDER BY id DESC
+            """
+            all_docs = json_store.execute_search(check_sql)
+            
+            # 显示数据库中的所有文档详细信息
+            st.subheader("📚 数据库中所有文档")
+            if all_docs:
+                st.write(f"📊 数据库中共有 {len(all_docs)} 个文档")
+                for doc in all_docs:
+                    if isinstance(doc['doc_json'], dict):
+                        data = doc['doc_json']
+                        patient_name = data.get("患者姓名", Path(doc['doc_info']).stem)
+                        
+                        # 使用expander为每个患者创建折叠面板
+                        with st.expander(f"📋 {patient_name}", expanded=False):
+                            # 创建标签页
                             tabs = st.tabs([
                                 "基本信息", "主诉与诊断", "现病史", 
                                 "生命体征", "生化指标", "诊疗经过", "全文内容"
@@ -910,7 +1226,7 @@ def main():
                                         "性别": data.get("性别", "未知"),
                                         "年龄": data.get("年龄", "未知"),
                                         "民族": data.get("民族", "未知"),
-                                        "职业": data.get("职业", "未"),
+                                        "职业": data.get("职业", "未知"),
                                         "婚姻状况": data.get("婚姻状况", "未知")
                                     }
                                     st.json(info)
@@ -967,33 +1283,60 @@ def main():
                                 if "content" in doc:
                                     st.text_area("", doc["content"], height=400)
                                 else:
-                                    st.info("未找到文档全文内容，请运行 update_content.py 更新全文内容")
-                        
-                        st.markdown("---")
-                else:
-                    st.info("📭 数据库中暂无结构化文档，请先在文档管���中上传并结构化文档")
-                
-                # 搜索功能
-                st.divider()
-                st.subheader("🔍 智能搜索")
-                query = st.text_input("请输入查询内容（支持结构化数据和全文搜索）")
-                
-                if query:
-                    with st.spinner("正在分析查询并搜索..."):
-                        results = search_documents(query)
-                        if results:
-                            for result in results:
-                                answer = generate_answer(query, result['doc_json'], result['content'])
-                                if answer:
-                                    st.success(answer)
-                                    with st.expander("查看完整文档"):
-                                        display_search_results(query, [result])
-                        else:
-                            st.warning("未找到相关信息")
-                        
-            except Exception as e:
-                logger.error(f"检索文档时发生错误: {str(e)}")
-                st.error(f"检索文档时发生错误: {str(e)}")
+                                    st.info("未找到文档全文内容")
+            else:
+                st.info("📭 数据库暂无结构化文档，请先在文档管理中上传并结构化文档")
+            
+            # 搜索功能
+            st.divider()
+            st.subheader("🔍 智能搜索")
+            query = st.text_input("请输入查询内容（支持结构化数据和全文搜索）")
+            
+            if query:
+                with st.spinner("正在分析查询并搜索..."):
+                    results = search_documents(query)
+                    if results:
+                        for result in results:
+                            answer = generate_answer(query, result['doc_json'], result['content'])
+                            if answer:
+                                st.success(answer)
+                                with st.expander("查看完整文档"):
+                                    display_search_results(query, [result])
+                    else:
+                        st.warning("未找到相关信息")
+                    
+        except Exception as e:
+            logger.error(f"检索文档时发生错误: {str(e)}")
+            st.error(f"检索文档时发生错误: {str(e)}")
+
+def main():
+    st.title("医疗文档智能检索系统")
+    
+    # 初始化数据库
+    init_database()
+    
+    # 创建侧边栏菜单
+    menu = st.sidebar.selectbox(
+        "功能菜单",
+        ["文档管理", "图数据检索", "向量检索", "结构化检索"]
+    )
+    
+    if menu == "文档管理":
+        display_document_management()
+    elif menu == "图数据检索":
+        st.header("图数据检索")
+        # 显示已解析的文档
+        display_parsed_documents()
+        
+        # 添加搜索框
+        query = st.text_input("请输入搜索内容（支持按患者姓名、症状、诊断等搜索）")
+        if query:
+            results = search_graph_data(query)
+            display_graph_results(results, query)
+    elif menu == "向量检索":
+        display_vector_search()
+    else:  # 结构化检索
+        display_structured_search()
 
 if __name__ == "__main__":
     main()

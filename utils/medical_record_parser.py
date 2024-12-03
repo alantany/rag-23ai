@@ -3,14 +3,15 @@ from typing import Dict, Any
 import logging
 import json
 import re
+import os
 
 logger = logging.getLogger(__name__)
 
 class MedicalRecordParser:
     def __init__(self):
         self.client = openai.OpenAI(
-            api_key="sk-1pUmQlsIkgla3CuvKTgCrzDZ3r0pBxO608YJvIHCN18lvOrn",
-            base_url="https://api.chatanywhere.tech/v1"
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_API_BASE")
         )
 
     def parse_medical_record(self, content: str) -> Dict[str, Any]:

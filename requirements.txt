@@ -10,6 +10,7 @@ faiss-cpu
 tiktoken
 google-search-results
 plotly
-pyvis
+pyvis==0.3.2
+networkx==3.2.1
 sqlalchemy
 oracledb-2.0.0.dev20231121-cp38-cp38-macosx_11_0_universal2.whl

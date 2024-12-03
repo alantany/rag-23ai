@@ -4,13 +4,17 @@ import os
 import numpy as np
 import PyPDF2
 import docx
+from dotenv import load_dotenv
 from .oracle_vector_store import OracleVectorStore
 from sentence_transformers import SentenceTransformer
 
+# 加载环境变量
+load_dotenv()
+
 # 初始化OpenAI客户端
 client = OpenAI(
-    api_key="sk-2D0EZSwcWUcD4c2K59353b7214854bBd8f35Ac131564EfBa",
-    base_url="https://free.gpt.ge/v1"
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url=os.getenv("OPENAI_API_BASE")
 )
 
 # 初始化Oracle向量存储
@@ -18,7 +22,7 @@ vector_store = OracleVectorStore()
 
 # 计算token数量
 def num_tokens_from_string(string: str) -> int:
-    encoding = tiktoken.encoding_for_model("gpt-4o-mini")
+    encoding = tiktoken.encoding_for_model(os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"))
     return len(encoding.encode(string))
 
 # 加载向量模型

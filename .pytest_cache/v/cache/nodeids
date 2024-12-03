@@ -1,0 +1,3 @@
+[
+  "tests/test_vector_store.py::test_vector_store"
+]
