@@ -1,5 +1,5 @@
 import openai
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import logging
 import json
 from datetime import datetime
@@ -130,20 +130,153 @@ class MedicalGraphParser:
             logger.error(f"清理JSON内容失败: {str(e)}")
             raise
 
+    def _get_cached_json(self, doc_name: str) -> Dict[str, Any]:
+        """从json_cache目录获取缓存的JSON文件"""
+        cache_dir = "json_cache"
+        json_file = os.path.join(cache_dir, f"{doc_name}.json")
+        
+        if os.path.exists(json_file):
+            logger.info(f"找到缓存的JSON文件: {json_file}")
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"读取缓存JSON文件失败: {str(e)}")
+                return None
+        else:
+            logger.info(f"未找到缓存的JSON文件: {json_file}")
+            return None
+
+    def _transform_json_structure(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """转换JSON结构为标准格式"""
+        def split_value_unit(value: str, unit_list: List[str]) -> Tuple[str, str]:
+            """分离数值和单位"""
+            if not isinstance(value, str):
+                return str(value), ""
+            for unit in unit_list:
+                if unit in value:
+                    parts = value.split(unit)
+                    return parts[0].strip(), unit
+            return value.strip(), ""
+
+        # 处理现病史
+        symptoms = data.get("现病史", [])
+        if isinstance(symptoms, list):
+            current_history = [{"症状": symptom} for symptom in symptoms]
+        else:
+            current_history = []
+
+        return {
+            "患者": {
+                "基本信息": {
+                    "姓名": data.get("患者姓名", "未知"),
+                    "性别": data.get("性别", "未知"),
+                    "年龄": str(data.get("年龄", "未知")),
+                    "入院日期": data.get("入院日期", "未知"),
+                    "出院日期": data.get("出院日期", "未知")
+                }
+            },
+            "主诉与诊断": [
+                {"类型": "主诉", "内容": data.get("主诉", "未知")}
+            ] + [
+                {"类型": "入院诊断", "内容": diag}
+                for diag in data.get("入院诊断", [])
+            ] + [
+                {"类型": "出院诊断", "内容": diag}
+                for diag in data.get("出院诊断", [])
+            ],
+            "现病史": current_history,
+            "生命体征": [
+                {
+                    "指标": key,
+                    "数值": value.replace("℃", "").replace("mmHg", "").strip() if isinstance(value, str) else str(value),
+                    "单位": "℃" if isinstance(value, str) and "℃" in value else "mmHg" if isinstance(value, str) and "mmHg" in value else ""
+                }
+                for key, value in data.get("生命体征", {}).items()
+            ],
+            "生化指标": [
+                {
+                    "项目": key,
+                    "结果": split_value_unit(value, ["mg/L", "g/L", "mmol/L", "μmol/L", "U/L", "μg/L", "/uL", "%", 
+                                                   "*10^12/L", "*10^9/L", "ng/mL", "pg/mL", "/HP", "mL/min/1.73m^2"])[0].replace("↑", "").replace("↓", ""),
+                    "单位": split_value_unit(value, ["mg/L", "g/L", "mmol/L", "μmol/L", "U/L", "μg/L", "/uL", "%", 
+                                                   "*10^12/L", "*10^9/L", "ng/mL", "pg/mL", "/HP", "mL/min/1.73m^2"])[1],
+                    "参考范围": "异常" if isinstance(value, str) and any(x in value for x in ["↑", "↓"]) else "正常"
+                }
+                for key, value in data.get("生化指标", {}).items()
+                if not key.endswith(")")  # 排除带括号的重复项
+            ],
+            "诊疗经过": [
+                {"类型": "诊疗经过", "内容": data.get("诊疗经过", "未知")}
+            ] + [
+                {"类型": "出院医嘱", "内容": advice}
+                for advice in data.get("出院医嘱", [])
+            ],
+            "metadata": data.get("metadata", {})
+        }
+
     def parse_to_graph(self, content: str, doc_reference: str) -> Dict[str, Any]:
         """将医疗文档解析为图数据结构"""
         try:
-            # 使用GPT提取实体和关系
+            # 首先清除旧数据
+            self.graph_store.delete_document_data(doc_reference)
+            logger.info(f"已清除文档 {doc_reference} 的旧数据")
+            
+            # 尝试从缓存获取JSON
+            doc_name = doc_reference.replace("的病历", "").strip()
+            # 如果文件名包含.pdf后缀，移除它
+            doc_name = doc_name.replace(".pdf", "")
+            cached_json = self._get_cached_json(doc_name)
+            
+            if cached_json:
+                logger.info("使用缓存的JSON数据")
+                # 转换JSON结构
+                transformed_json = self._transform_json_structure(cached_json)
+                # 将解析结果存入图数据库
+                self._store_graph_data(transformed_json, doc_reference)
+                return transformed_json
+            
+            # 如果没有缓存，则使用GPT提取实体和关系
+            logger.info("未找到缓存数据，使用GPT进行解析")
             prompt = f"""
             请仔细分析以下电子病历，提取关键实体和关系。为了确保数据质量，请遵循以下规则：
-            1. 每个诊断项单独列出，不要合并
-            2. 时间格式统一为YYYY-MM-DD，如果没有具体时间则填写"null"
-            3. 所有数值都需要用引号包围
-            4. 对于过长的内容，请只保留最重要的前3-5项
-            5. 确保JSON格式完整，所有字符串都正确闭合
-            
+
+            1. 基本信息部分：
+               - 患者姓名、性别、年龄、民族、职业、婚姻状况等基本信息
+               - 住院信息：入院日期、出院日期、住院天数、出院情况
+
+            2. 主诉与诊断部分：
+               - 入院时主诉
+               - 入院诊断（每个诊断单独列出）
+               - 出院诊断（每个诊断单独列出）
+               - 诊断的时间信息
+
+            3. 现病史部分：
+               - 发病时间
+               - 主要症状及其发展过程
+               - 就医经过
+               - 治疗效果
+
+            4. 生命体征部分：
+               - 体温、脉搏、呼吸、血压等指标
+               - 各项指标的具体数值和单位
+               - 测量时间
+
+            5. 生化指标部分：
+               - 各项检验指标名称
+               - 检验结果值和单位
+               - 检验时间
+               - 参考范围
+
+            6. 诊疗经过部分：
+               - 治疗方案
+               - 用药情况
+               - 手术/操作记录
+               - 治疗效果评估
+               - 随访记录
+
             请按以下JSON格式返回（注意：所有属性名和值都要用双引号包围）：
-            
+
             {{
                 "患者": {{
                     "姓名": "患者姓名",
@@ -152,7 +285,7 @@ class MedicalGraphParser:
                         "年龄": "年龄值",
                         "民族": "民族值",
                         "职业": "职业值",
-                        "婚姻状况": "婚姻状况值"
+                        "婚姻状": "婚姻状况值"
                     }},
                     "住院信息": {{
                         "入院日期": "YYYY-MM-DD",
@@ -164,14 +297,12 @@ class MedicalGraphParser:
                 "主诉与诊断": [
                     {{
                         "类型": "主诉/入院诊断/出院诊断",
-                        "内容": "具体内容",
-                        "时间": "YYYY-MM-DD"
+                        "内容": "具体内容"
                     }}
                 ],
                 "现病史": [
                     {{
                         "症状": "症状名称",
-                        "时间": "YYYY-MM-DD",
                         "描述": "具体描述"
                     }}
                 ],
@@ -179,14 +310,22 @@ class MedicalGraphParser:
                     {{
                         "指标": "体温/脉搏/呼吸/血压",
                         "数值": "具体值",
-                        "时间": "YYYY-MM-DD"
+                        "单位": "单位值"
                     }}
                 ],
                 "生化指标": [
                     {{
                         "项目": "检验项目名称",
                         "结果": "检验结果值",
-                        "时间": "YYYY-MM-DD"
+                        "单位": "单位值",
+                        "参考范围": "范围值"
+                    }}
+                ],
+                "诊疗经过": [
+                    {{
+                        "类型": "治疗方案/用药/手术/随访",
+                        "内容": "具体内容",
+                        "效果": "效果描述"
                     }}
                 ]
             }}
@@ -198,11 +337,11 @@ class MedicalGraphParser:
             response = self.client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
                 messages=[
-                    {"role": "system", "content": "你是一个专业的医疗数据分析助手，擅长从病历文本中提取关键信息。请确保返回的JSON格式完整，数据简洁。对于过长的列表，只保留最重要的3-5项。"},
+                    {"role": "system", "content": "你是一个专业的医疗数据分析助手，擅长从病历文本中提取关键信息。请确保返回的JSON格式完整，数据简洁。"},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,
-                max_tokens=2000  # 限制返回的token数量
+                max_tokens=2000
             )
             
             # 记录API响应内容
@@ -212,25 +351,19 @@ class MedicalGraphParser:
             content = self._clean_json_content(response.choices[0].message.content)
             
             # 验证JSON格式
-            try:
-                result = json.loads(content)
-                logger.info("JSON解析成功")
-                
-                # 验证必要字段
-                required_fields = ["患者", "主诉与诊断", "现病史", "生命体征", "生化指标"]
-                for field in required_fields:
-                    if field not in result:
-                        logger.warning(f"缺少必要字段: {field}")
-                        result[field] = []
-                
-                # 将解析结果存入图数据库
-                self._store_graph_data(result, doc_reference)
-                return result
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON解析失败: {str(e)}")
-                logger.error(f"JSON内容:\n{content}")
-                raise
+            result = json.loads(content)
+            logger.info("JSON解析成功")
+            
+            # 验证必要字段
+            required_fields = ["患者", "主诉与诊断", "现病史", "生命体征", "生化指标", "诊疗经过"]
+            for field in required_fields:
+                if field not in result:
+                    logger.warning(f"缺少必要字段: {field}")
+                    result[field] = []
+            
+            # 将解析结果存入图数据库
+            self._store_graph_data(result, doc_reference)
+            return result
             
         except Exception as e:
             logger.error(f"解析医疗记录失败: {str(e)}")
