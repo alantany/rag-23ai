@@ -56,22 +56,8 @@ class OracleGraphStore:
                     WHERE TABLE_NAME = 'MEDICAL_ENTITIES'
                 """)
                 if cursor.fetchone()[0] == 0:
-                    # 创建实体表
-                    cursor.execute("""
-                        CREATE TABLE MEDICAL_ENTITIES (
-                            ENTITY_ID NUMBER GENERATED ALWAYS AS IDENTITY,
-                            ENTITY_TYPE VARCHAR2(100),
-                            ENTITY_NAME VARCHAR2(1000),
-                            ENTITY_VALUE VARCHAR2(1000),
-                            ENTITY_TIME DATE,
-                            DOC_REF VARCHAR2(1000),
-                            CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            PRIMARY KEY (ENTITY_ID)
-                        )
-                    """)
-                    logger.info("成功创建实体表 MEDICAL_ENTITIES")
-                else:
-                    logger.info("实体表 MEDICAL_ENTITIES 已存在")
+                    logger.error("MEDICAL_ENTITIES 表不存在，请先创建数据库表")
+                    raise ValueError("数据库表未创建")
                 
                 # 检查关系表是否存在
                 cursor.execute("""
@@ -80,27 +66,10 @@ class OracleGraphStore:
                     WHERE TABLE_NAME = 'MEDICAL_RELATIONS'
                 """)
                 if cursor.fetchone()[0] == 0:
-                    # 创建关系表
-                    cursor.execute("""
-                        CREATE TABLE MEDICAL_RELATIONS (
-                            RELATION_ID NUMBER GENERATED ALWAYS AS IDENTITY,
-                            FROM_ENTITY_ID NUMBER,
-                            TO_ENTITY_ID NUMBER,
-                            RELATION_TYPE VARCHAR2(100),
-                            RELATION_TIME DATE,
-                            DOC_REFERENCE VARCHAR2(1000),
-                            CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            PRIMARY KEY (RELATION_ID),
-                            FOREIGN KEY (FROM_ENTITY_ID) REFERENCES MEDICAL_ENTITIES(ENTITY_ID) ON DELETE CASCADE,
-                            FOREIGN KEY (TO_ENTITY_ID) REFERENCES MEDICAL_ENTITIES(ENTITY_ID) ON DELETE CASCADE
-                        )
-                    """)
-                    logger.info("成功创建关系表 MEDICAL_RELATIONS")
-                else:
-                    logger.info("关系表 MEDICAL_RELATIONS 已存在")
+                    logger.error("MEDICAL_RELATIONS 表不存在，请先创建数据库表")
+                    raise ValueError("数据库表未创建")
                 
-                connection.commit()
-                logger.info("数据库表初始化完成")
+                logger.info("数据库表检查完成")
                 
         except Exception as e:
             logger.error(f"初始化数据库表失败: {str(e)}")
@@ -127,6 +96,35 @@ class OracleGraphStore:
                 
         except Exception as e:
             logger.error(f"清理数据失败: {str(e)}")
+            raise
+
+    def delete_document_data(self, doc_reference: str):
+        """删除指定文档的所有数据"""
+        try:
+            with self.get_connection() as connection:
+                cursor = connection.cursor()
+                
+                # 由于外键约束，删除关系表数据
+                cursor.execute("""
+                    DELETE FROM MEDICAL_RELATIONS
+                    WHERE DOC_REFERENCE = :1
+                """, [doc_reference])
+                relations_deleted = cursor.rowcount
+                logger.info(f"已删除文档 {doc_reference} 的关系数据: {relations_deleted}行")
+                
+                # 再删除实体表数据
+                cursor.execute("""
+                    DELETE FROM MEDICAL_ENTITIES
+                    WHERE DOC_REF = :1
+                """, [doc_reference])
+                entities_deleted = cursor.rowcount
+                logger.info(f"已删除文档 {doc_reference} 的实体数据: {entities_deleted}行")
+                
+                connection.commit()
+                logger.info(f"成功删除文档 {doc_reference} 的所有数据")
+                
+        except Exception as e:
+            logger.error(f"删除文档数据失败: {str(e)}")
             raise
 
     def __enter__(self):
@@ -289,7 +287,7 @@ class OracleGraphStore:
                         "名称": row[1],
                         "值": row[2],
                         "时间": row[3].strftime('%Y-%m-%d') if row[3] else None,
-                        "文档引用": row[4]
+                        "档引用": row[4]
                     })
                 
                 return results
@@ -414,22 +412,38 @@ class OracleGraphStore:
                 results = []
                 for row in raw_data:
                     try:
+                        # 读取CLOB内容
+                        clob_data = row[2]
+                        if hasattr(clob_data, 'read'):
+                            entity_value = clob_data.read()
+                        else:
+                            entity_value = str(clob_data)
+                        
                         # 解析患者信息
-                        patient_info = json.loads(row[2]) if row[2] else {}
+                        patient_info = json.loads(entity_value)
                         logger.info(f"解析的患者信息: {patient_info}")
                         
                         # 构建患者数据
                         patient_data = {
-                            "姓名": row[0],  # 使用ENTITY_NAME作为姓名
-                            "文档": row[1],  # 使用DOC_REF作为文档
-                            "基本信息": patient_info.get("基本信息", {}),
-                            "入院日期": patient_info.get("住院信息", {}).get("入院日期"),
-                            "出院日期": patient_info.get("住院信息", {}).get("出院日期")
+                            "姓名": patient_info.get("患者姓名", row[0]),
+                            "文档": row[1],
+                            "基本信息": {
+                                "姓名": patient_info.get("患者姓名", "未知"),
+                                "性别": patient_info.get("性别", "未知"),
+                                "年龄": patient_info.get("年龄", "未知"),
+                                "入院日期": patient_info.get("入院日期", "未知"),
+                                "出院日期": patient_info.get("出院日期", "未知")
+                            },
+                            "主诉": patient_info.get("主诉", "未知"),
+                            "现病史": patient_info.get("现病史", []),
+                            "入院诊断": patient_info.get("入院诊断", []),
+                            "出院诊断": patient_info.get("出院诊断", []),
+                            "生命体征": patient_info.get("生命体征", {}),
+                            "生化指标": patient_info.get("生化指标", {}),
+                            "诊疗经过": patient_info.get("诊疗经过", ""),
+                            "出院医嘱": patient_info.get("出院医嘱", []),
+                            "metadata": patient_info.get("metadata", {})
                         }
-                        
-                        # 确保基本信息是字典
-                        if not isinstance(patient_data["基本信息"], dict):
-                            patient_data["基本信息"] = {}
                         
                         logger.info(f"处理后的患者数据: {patient_data}")
                         results.append(patient_data)
@@ -441,8 +455,15 @@ class OracleGraphStore:
                             "姓名": row[0],
                             "文档": row[1],
                             "基本信息": {},
-                            "入院日期": None,
-                            "出院日期": None
+                            "主诉": "未知",
+                            "现病史": [],
+                            "入院诊断": [],
+                            "出院诊断": [],
+                            "生命体征": {},
+                            "生化指标": {},
+                            "诊疗经过": "",
+                            "出院医嘱": [],
+                            "metadata": {}
                         })
                     except Exception as e:
                         logger.error(f"处理患者数据时出错: {str(e)}, 跳过此条记录")
@@ -457,7 +478,7 @@ class OracleGraphStore:
             return []
 
     def get_all_patients(self) -> List[Dict[str, Any]]:
-        """获取所有患者列表（get_patients 的别名）"""
+        """获取有患者列表（get_patients 的别名）"""
         return self.get_patients()
 
     def search_relations(self, query_type: Optional[str] = None, 
@@ -608,7 +629,7 @@ class OracleGraphStore:
                 
                 return {
                     "基本信息": patient_info.get("基本信息", {}),
-                    "住院信息": hospital_info,
+                    "住信息": hospital_info,
                     "主要诊断": diagnoses
                 }
                 
@@ -616,152 +637,267 @@ class OracleGraphStore:
             logger.error(f"获取患者摘要失败: {str(e)}")
             raise
 
-    def store_medical_data(self, data: dict, doc_reference: str):
-        """存储医疗数据到图数据库"""
+    def store_medical_data(self, data: Dict[str, Any], doc_reference: str):
+        """将解析后的数据存储到图数据库中"""
         try:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 
-                # 存储患者信息
-                patient_data = data.get("患者", {})
-                logger.info(f"开始处理患者数据: {doc_reference}")
-                logger.info(f"患者数据内容: {json.dumps(patient_data, ensure_ascii=False)}")
-                
-                # 创建输出参数变量
-                entity_id_var = cursor.var(oracledb.NUMBER)
-                
-                # 存储患者实体
+                # 存储患者基本信息
+                id_var = cursor.var(int)
+                patient_name = str(data.get("患者姓名", ""))
+                if not patient_name:
+                    logger.error("患者姓名不能为空")
+                    raise ValueError("患者姓名不能为空")
+                    
                 cursor.execute("""
                     INSERT INTO MEDICAL_ENTITIES 
-                    (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF)
-                    VALUES ('患者', :name, :value, :doc_ref)
-                    RETURNING ENTITY_ID INTO :entity_id
+                    (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                    VALUES ('患者', :name, :value, :doc_ref, :created_at)
+                    RETURNING ENTITY_ID INTO :id
                 """, {
-                    'name': patient_data.get("姓名"),
-                    'value': json.dumps(patient_data, ensure_ascii=False),
-                    'doc_ref': doc_reference,
-                    'entity_id': entity_id_var
+                    'name': patient_name,  # 直接使用患者姓名，不设置默认值
+                    'value': json.dumps(data, ensure_ascii=False),
+                    'doc_ref': str(doc_reference),
+                    'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'id': id_var
                 })
-                patient_id = entity_id_var.getvalue()[0]
-                logger.info(f"存储患者信息成功: ID={patient_id}")
-
-                # 存储主诉与诊断
-                for diagnosis in data.get("主诉与诊断", []):
-                    entity_id_var = cursor.var(oracledb.NUMBER)
+                patient_id = id_var.getvalue()[0]
+                
+                # 存储主诉
+                id_var = cursor.var(int)
+                cursor.execute("""
+                    INSERT INTO MEDICAL_ENTITIES 
+                    (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                    VALUES ('主诉', '主诉', :value, :doc_ref, :created_at)
+                    RETURNING ENTITY_ID INTO :id
+                """, {
+                    'value': str(data.get("主诉", "未知")),
+                    'doc_ref': str(doc_reference),
+                    'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'id': id_var
+                })
+                chief_complaint_id = id_var.getvalue()[0]
+                
+                cursor.execute("""
+                    INSERT INTO MEDICAL_RELATIONS 
+                    (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                    VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
+                """, {
+                    'from_id': patient_id,
+                    'to_id': chief_complaint_id,
+                    'rel_type': "主诉",
+                    'doc_ref': str(doc_reference),
+                    'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+                # 存储现病史
+                for symptom in data.get("现病史", []):
+                    id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
-                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF)
-                        VALUES ('诊断', :name, :value, :doc_ref)
-                        RETURNING ENTITY_ID INTO :entity_id
+                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                        VALUES ('现病史', '症状', :value, :doc_ref, :created_at)
+                        RETURNING ENTITY_ID INTO :id
                     """, {
-                        'name': str(diagnosis.get("类型", "")),
-                        'value': str(diagnosis.get("内容", "")),
-                        'doc_ref': doc_reference,
-                        'entity_id': entity_id_var
+                        'value': str(symptom),
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'id': id_var
                     })
-                    diagnosis_id = entity_id_var.getvalue()[0]
+                    symptom_id = id_var.getvalue()[0]
                     
-                    # 创建关系
                     cursor.execute("""
                         INSERT INTO MEDICAL_RELATIONS 
-                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE)
-                        VALUES (:from_id, :to_id, :rel_type, :doc_ref)
+                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                        VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
+                    """, {
+                        'from_id': patient_id,
+                        'to_id': symptom_id,
+                        'rel_type': "现病史",
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                
+                # 存储入院诊断
+                for diagnosis in data.get("入院诊断", []):
+                    id_var = cursor.var(int)
+                    cursor.execute("""
+                        INSERT INTO MEDICAL_ENTITIES 
+                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                        VALUES ('入院诊断', '诊断', :value, :doc_ref, :created_at)
+                        RETURNING ENTITY_ID INTO :id
+                    """, {
+                        'value': str(diagnosis),
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'id': id_var
+                    })
+                    diagnosis_id = id_var.getvalue()[0]
+                    
+                    cursor.execute("""
+                        INSERT INTO MEDICAL_RELATIONS 
+                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                        VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
                     """, {
                         'from_id': patient_id,
                         'to_id': diagnosis_id,
-                        'rel_type': '诊断',
-                        'doc_ref': doc_reference
+                        'rel_type': "入院诊断",
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
-
-                # 存储现病史
-                for history in data.get("现病史", []):
-                    entity_id_var = cursor.var(oracledb.NUMBER)
+                
+                # 存储出院诊断
+                for diagnosis in data.get("出院诊断", []):
+                    id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
-                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF)
-                        VALUES ('现病史', :name, :value, :doc_ref)
-                        RETURNING ENTITY_ID INTO :entity_id
+                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                        VALUES ('出院诊断', '诊断', :value, :doc_ref, :created_at)
+                        RETURNING ENTITY_ID INTO :id
                     """, {
-                        'name': str(history.get("症状", "")),
-                        'value': str(history.get("描述", "")),
-                        'doc_ref': doc_reference,
-                        'entity_id': entity_id_var
+                        'value': str(diagnosis),
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'id': id_var
                     })
-                    history_id = entity_id_var.getvalue()[0]
+                    diagnosis_id = id_var.getvalue()[0]
                     
-                    # 创建关系
                     cursor.execute("""
                         INSERT INTO MEDICAL_RELATIONS 
-                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE)
-                        VALUES (:from_id, :to_id, :rel_type, :doc_ref)
+                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                        VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
                     """, {
                         'from_id': patient_id,
-                        'to_id': history_id,
-                        'rel_type': '现病史',
-                        'doc_ref': doc_reference
+                        'to_id': diagnosis_id,
+                        'rel_type': "出院诊断",
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
-
+                
                 # 存储生命体征
-                for vital in data.get("生命体征", []):
-                    entity_id_var = cursor.var(oracledb.NUMBER)
-                    cursor.execute("""
-                        INSERT INTO MEDICAL_ENTITIES 
-                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF)
-                        VALUES ('生命体征', :name, :value, :doc_ref)
-                        RETURNING ENTITY_ID INTO :entity_id
-                    """, {
-                        'name': str(vital.get("指标", "")),
-                        'value': str(vital.get("数值", "")),
-                        'doc_ref': doc_reference,
-                        'entity_id': entity_id_var
-                    })
-                    vital_id = entity_id_var.getvalue()[0]
-                    
-                    # 创建关系
-                    cursor.execute("""
-                        INSERT INTO MEDICAL_RELATIONS 
-                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE)
-                        VALUES (:from_id, :to_id, :rel_type, :doc_ref)
-                    """, {
-                        'from_id': patient_id,
-                        'to_id': vital_id,
-                        'rel_type': '生命体征',
-                        'doc_ref': doc_reference
-                    })
-
+                vital_signs = data.get("生命体征", {})
+                if isinstance(vital_signs, dict):
+                    for key, value in vital_signs.items():
+                        id_var = cursor.var(int)
+                        cursor.execute("""
+                            INSERT INTO MEDICAL_ENTITIES 
+                            (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                            VALUES ('生命体征', :name, :value, :doc_ref, :created_at)
+                            RETURNING ENTITY_ID INTO :id
+                        """, {
+                            'name': str(key),
+                            'value': str(value),
+                            'doc_ref': str(doc_reference),
+                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'id': id_var
+                        })
+                        vital_id = id_var.getvalue()[0]
+                        
+                        cursor.execute("""
+                            INSERT INTO MEDICAL_RELATIONS 
+                            (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                            VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
+                        """, {
+                            'from_id': patient_id,
+                            'to_id': vital_id,
+                            'rel_type': "生命体征",
+                            'doc_ref': str(doc_reference),
+                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                
                 # 存储生化指标
-                for lab in data.get("生化指标", []):
-                    entity_id_var = cursor.var(oracledb.NUMBER)
+                biochemical_indicators = data.get("生化指标", {})
+                if isinstance(biochemical_indicators, dict):
+                    for key, value in biochemical_indicators.items():
+                        id_var = cursor.var(int)
+                        cursor.execute("""
+                            INSERT INTO MEDICAL_ENTITIES 
+                            (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                            VALUES ('生化指标', :name, :value, :doc_ref, :created_at)
+                            RETURNING ENTITY_ID INTO :id
+                        """, {
+                            'name': str(key),
+                            'value': str(value),
+                            'doc_ref': str(doc_reference),
+                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'id': id_var
+                        })
+                        test_id = id_var.getvalue()[0]
+                        
+                        cursor.execute("""
+                            INSERT INTO MEDICAL_RELATIONS 
+                            (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                            VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
+                        """, {
+                            'from_id': patient_id,
+                            'to_id': test_id,
+                            'rel_type': "生化指标",
+                            'doc_ref': str(doc_reference),
+                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                
+                # 存储诊疗经过
+                if data.get("诊疗经过"):
+                    id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
-                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF)
-                        VALUES ('生化指标', :name, :value, :doc_ref)
-                        RETURNING ENTITY_ID INTO :entity_id
+                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                        VALUES ('诊疗经过', '经过', :value, :doc_ref, :created_at)
+                        RETURNING ENTITY_ID INTO :id
                     """, {
-                        'name': str(lab.get("项目", "")),
-                        'value': str(lab.get("结果", "")),
-                        'doc_ref': doc_reference,
-                        'entity_id': entity_id_var
+                        'value': str(data.get("诊疗经过")),
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'id': id_var
                     })
-                    lab_id = entity_id_var.getvalue()[0]
+                    treatment_id = id_var.getvalue()[0]
                     
-                    # 创建关系
                     cursor.execute("""
                         INSERT INTO MEDICAL_RELATIONS 
-                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE)
-                        VALUES (:from_id, :to_id, :rel_type, :doc_ref)
+                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                        VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
                     """, {
                         'from_id': patient_id,
-                        'to_id': lab_id,
-                        'rel_type': '生化指标',
-                        'doc_ref': doc_reference
+                        'to_id': treatment_id,
+                        'rel_type': "诊疗经过",
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                
+                # 存储出院医嘱
+                for advice in data.get("出院医嘱", []):
+                    id_var = cursor.var(int)
+                    cursor.execute("""
+                        INSERT INTO MEDICAL_ENTITIES 
+                        (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
+                        VALUES ('出院医嘱', '医嘱', :value, :doc_ref, :created_at)
+                        RETURNING ENTITY_ID INTO :id
+                    """, {
+                        'value': str(advice),
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'id': id_var
+                    })
+                    advice_id = id_var.getvalue()[0]
+                    
+                    cursor.execute("""
+                        INSERT INTO MEDICAL_RELATIONS 
+                        (FROM_ENTITY_ID, TO_ENTITY_ID, RELATION_TYPE, DOC_REFERENCE, CREATED_AT)
+                        VALUES (:from_id, :to_id, :rel_type, :doc_ref, :created_at)
+                    """, {
+                        'from_id': patient_id,
+                        'to_id': advice_id,
+                        'rel_type': "出院医嘱",
+                        'doc_ref': str(doc_reference),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                 
                 connection.commit()
-                logger.info(f"成功存储文档 {doc_reference} 的所有数据")
+                logger.info(f"成功存储文档 {doc_reference} 的数据")
                 
         except Exception as e:
-            logger.error(f"存储图数据失败: {str(e)}")
+            logger.error(f"存储医疗数据失败: {str(e)}")
             raise
 
     def get_patient_info(self, patient_name: str) -> Dict[str, Any]:
@@ -792,126 +928,37 @@ class OracleGraphStore:
                     return {}
                 
                 try:
+                    # 读取CLOB内容
+                    clob_data = row[2]
+                    if hasattr(clob_data, 'read'):
+                        entity_value = clob_data.read()
+                    else:
+                        entity_value = str(clob_data)
+                    
                     # 解析患者信息
-                    patient_info = json.loads(row[2]) if row[2] else {}
+                    patient_info = json.loads(entity_value)
                     logger.info(f"解析的患者信息: {patient_info}")
                     
-                    # 构建患者数据
-                    result = {
-                        "基本信息": patient_info.get("基本信息", {}),
-                        "主诉与诊断": [],
-                        "现病史": [],
-                        "生命体征": [],
-                        "生化指标": [],
-                        "诊疗经过": []
+                    # 返回完整的患者信息
+                    return {
+                        "姓名": row[0],
+                        "文档": row[1],
+                        **patient_info  # 展开完整的患者信息
                     }
-                    
-                    # 获取患者的诊断信息
-                    sql = """
-                        SELECT 
-                            e2.ENTITY_NAME,
-                            e2.ENTITY_VALUE,
-                            e2.ENTITY_TIME
-                        FROM MEDICAL_ENTITIES e1
-                        JOIN MEDICAL_RELATIONS r ON e1.ENTITY_ID = r.FROM_ENTITY_ID
-                        JOIN MEDICAL_ENTITIES e2 ON r.TO_ENTITY_ID = e2.ENTITY_ID
-                        WHERE e1.ENTITY_TYPE = '患者'
-                        AND e1.ENTITY_NAME = :1
-                        AND e2.ENTITY_TYPE = '诊断'
-                        ORDER BY e2.ENTITY_TIME
-                    """
-                    cursor.execute(sql, [patient_name])
-                    
-                    for diagnosis_row in cursor:
-                        result["主诉与诊断"].append({
-                            "类型": diagnosis_row[0],
-                            "内容": diagnosis_row[1],
-                            "时间": diagnosis_row[2].strftime('%Y-%m-%d') if diagnosis_row[2] else None
-                        })
-                    
-                    # 获取现病史
-                    sql = """
-                        SELECT 
-                            e2.ENTITY_NAME,
-                            e2.ENTITY_VALUE,
-                            e2.ENTITY_TIME
-                        FROM MEDICAL_ENTITIES e1
-                        JOIN MEDICAL_RELATIONS r ON e1.ENTITY_ID = r.FROM_ENTITY_ID
-                        JOIN MEDICAL_ENTITIES e2 ON r.TO_ENTITY_ID = e2.ENTITY_ID
-                        WHERE e1.ENTITY_TYPE = '患者'
-                        AND e1.ENTITY_NAME = :1
-                        AND e2.ENTITY_TYPE = '现病史'
-                        ORDER BY e2.ENTITY_TIME
-                    """
-                    cursor.execute(sql, [patient_name])
-                    
-                    for history_row in cursor:
-                        result["现病史"].append({
-                            "症状": history_row[0],
-                            "描述": history_row[1],
-                            "时间": history_row[2].strftime('%Y-%m-%d') if history_row[2] else None
-                        })
-                    
-                    # 获取生命体征
-                    sql = """
-                        SELECT 
-                            e2.ENTITY_NAME,
-                            e2.ENTITY_VALUE,
-                            e2.ENTITY_TIME
-                        FROM MEDICAL_ENTITIES e1
-                        JOIN MEDICAL_RELATIONS r ON e1.ENTITY_ID = r.FROM_ENTITY_ID
-                        JOIN MEDICAL_ENTITIES e2 ON r.TO_ENTITY_ID = e2.ENTITY_ID
-                        WHERE e1.ENTITY_TYPE = '患者'
-                        AND e1.ENTITY_NAME = :1
-                        AND e2.ENTITY_TYPE = '生命体征'
-                        ORDER BY e2.ENTITY_TIME
-                    """
-                    cursor.execute(sql, [patient_name])
-                    
-                    for vital_row in cursor:
-                        result["生命体征"].append({
-                            "指标": vital_row[0],
-                            "数值": vital_row[1],
-                            "时间": vital_row[2].strftime('%Y-%m-%d') if vital_row[2] else None
-                        })
-                    
-                    # 获取生化指标
-                    sql = """
-                        SELECT 
-                            e2.ENTITY_NAME,
-                            e2.ENTITY_VALUE,
-                            e2.ENTITY_TIME
-                        FROM MEDICAL_ENTITIES e1
-                        JOIN MEDICAL_RELATIONS r ON e1.ENTITY_ID = r.FROM_ENTITY_ID
-                        JOIN MEDICAL_ENTITIES e2 ON r.TO_ENTITY_ID = e2.ENTITY_ID
-                        WHERE e1.ENTITY_TYPE = '患者'
-                        AND e1.ENTITY_NAME = :1
-                        AND e2.ENTITY_TYPE = '生化指标'
-                        ORDER BY e2.ENTITY_TIME
-                    """
-                    cursor.execute(sql, [patient_name])
-                    
-                    for lab_row in cursor:
-                        result["生化指标"].append({
-                            "项目": lab_row[0],
-                            "结果": lab_row[1],
-                            "时间": lab_row[2].strftime('%Y-%m-%d') if lab_row[2] else None
-                        })
-                    
-                    logger.info(f"处理后的患者完整数据: {json.dumps(result, ensure_ascii=False)}")
-                    return result
                     
                 except json.JSONDecodeError as e:
-                    logger.error(f"解析患者信息失败: {str(e)}, 原始数据: {row[2]}")
+                    logger.error(f"解析患者信息失败: {str(e)}, 原始数据: {entity_value}")
                     return {
-                        "基本信息": {},
-                        "主诉与诊断": [],
-                        "现病史": [],
-                        "生命体征": [],
-                        "生化指标": [],
-                        "诊疗经过": []
+                        "姓名": row[0],
+                        "文档": row[1]
                     }
-                    
+                except Exception as e:
+                    logger.error(f"处理患者数据时出错: {str(e)}")
+                    return {
+                        "姓名": row[0],
+                        "文档": row[1]
+                    }
+                
         except Exception as e:
             logger.error(f"获取患者信息失败: {str(e)}")
             return {}
