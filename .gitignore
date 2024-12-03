@@ -18,6 +18,9 @@ parts/
 sdist/
 var/
 wheels/
+json_cache/
+.pytest_cache/
+docs/
 *.egg-info/
 .installed.cfg
 *.egg
