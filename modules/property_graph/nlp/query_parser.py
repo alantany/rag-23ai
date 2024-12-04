@@ -57,16 +57,26 @@ class GraphQueryParser:
                 )
             """,
             "common_symptoms": """
-                SELECT relation_type, COUNT(*) as count
+                SELECT v2.entity_value AS symptom, COUNT(*) as count
                 FROM GRAPH_TABLE (medical_kg
                     MATCH
                     (v IS entity) -[e IS relation WHERE e.relation_type = '现病史']-> (v2 IS entity)
                     COLUMNS (
-                        e.relation_type AS relation_type
+                        v2.entity_value AS symptom
                     )
                 )
-                GROUP BY relation_type
+                GROUP BY v2.entity_value
+                ORDER BY count DESC
             """
+        }
+        
+        # 定义关键词到模板的映射
+        self.keyword_templates = {
+            "所有信息": "patient_info",
+            "症状": "patient_symptoms",
+            "诊疗经过": "treatment_process",
+            "统计": "common_symptoms",
+            "常见": "common_symptoms"
         }
 
     def parse_query(self, query: str) -> Tuple[str, Dict[str, Any]]:
@@ -79,29 +89,48 @@ class GraphQueryParser:
         Returns:
             Tuple[str, Dict[str, Any]]: Query template name and parameters
         """
-        # 构建提示
-        prompt = f"""
-        请将以下自然语言查询转换为图数据库查询。
-        
-        可用的查询模板有：
-        1. patient_info - 查询患者的所有信息
-        2. patient_symptoms - 查询患者的症状
-        3. treatment_process - 查询患者的诊疗经过
-        4. common_symptoms - 查询常见症状统计
-        
-        自然语言查询：{query}
-        
-        请以JSON格式返回：
-        {{
-            "template": "模板名称",
-            "params": {{
-                "参数名": "参数值"
-            }},
-            "explanation": "选择原因解释"
-        }}
-        """
-        
         try:
+            # 首先尝试基于关键词匹配
+            template_name = None
+            for keyword, template in self.keyword_templates.items():
+                if keyword in query:
+                    template_name = template
+                    break
+            
+            # 如果找到了模板，提取参数
+            params = {}
+            if template_name:
+                # 检查是否需要patient_name参数
+                if template_name in ["patient_info", "patient_symptoms", "treatment_process"]:
+                    # 简单的患者名字提取（可以改进）
+                    import re
+                    patient_match = re.search(r'([张李王赵马蒲周杨刘]某某)', query)
+                    if patient_match:
+                        params["patient_name"] = patient_match.group(1)
+                return template_name, params
+            
+            # 如果关键词匹配失败，使用OpenAI
+            prompt = f"""
+            请将以下自然语言查询转换为图数据库查询。
+            
+            可用的查询模板有：
+            1. patient_info - 查询患者的所有信息
+            2. patient_symptoms - 查询患者的症状
+            3. treatment_process - 查询患者的诊疗经过
+            4. common_symptoms - 查询常见症状统计
+            
+            自然语言查询：{query}
+            
+            请以JSON格式返回：
+            {{
+                "template": "模板名称",
+                "params": {{
+                    "参数名": "参数值"
+                }},
+                "explanation": "选择原因解释"
+            }}
+            """
+            
             # 调用OpenAI API
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -123,8 +152,15 @@ class GraphQueryParser:
             
         except Exception as e:
             print(f"Error parsing query: {e}")
-            # 默认返回patient_info模板
-            return "patient_info", {}
+            # 根据查询内容选择默认模板
+            if "症状" in query:
+                return "patient_symptoms", {}
+            elif "诊疗" in query or "治疗" in query:
+                return "treatment_process", {}
+            elif "统计" in query or "常见" in query:
+                return "common_symptoms", {}
+            else:
+                return "patient_info", {}
             
     def get_graph_query(self, template_name: str, params: Dict[str, Any]) -> str:
         """
@@ -164,4 +200,4 @@ class GraphQueryParser:
         """
         template_name, params = self.parse_query(query)
         graph_query = self.get_graph_query(template_name, params)
-        return template_name, params, graph_query 
+        return template_name, params, graph_query
