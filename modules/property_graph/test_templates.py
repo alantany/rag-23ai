@@ -71,18 +71,18 @@ def test_templates():
     for row in results:
         print(row)
         
-    # 4. 测试常见症状统计
-    print("\n4. 测试常见症状统计")
+    # 4. 测试关系类型统计
+    print("\n4. 测试关系类型统计")
     query = """
-    SELECT symptom, COUNT(*) as count
+    SELECT relation_type, COUNT(*) as count
     FROM GRAPH_TABLE (medical_kg
         MATCH
-        (v IS entity) -[e IS relation WHERE e.relation_type = '现病史']-> (v2 IS entity)
+        (v IS entity) -[e IS relation]-> (v2 IS entity)
         COLUMNS (
-            v2.entity_value AS symptom
+            e.relation_type AS relation_type
         )
     )
-    GROUP BY symptom
+    GROUP BY relation_type
     ORDER BY count DESC
     """
     results = query_executor.execute_graph_query(query)
@@ -90,80 +90,27 @@ def test_templates():
     for row in results:
         print(row)
         
-    # 5. 测试医疗数据关联性分析
-    print("\n5. 测试医疗数据关联性分析")
+    # 5. 测试患者数据统计
+    print("\n5. 测试患者数据统计")
     query = """
-    WITH 
-    -- 获取病史数据
-    history AS (
-        SELECT symptom
-        FROM GRAPH_TABLE (medical_kg
-            MATCH (v IS entity WHERE v.entity_name = :patient_name)
-                -[e IS relation WHERE e.relation_type = '现病史']-> (v2 IS entity)
-            COLUMNS (v2.entity_value AS symptom)
-        )
-    ),
-    -- 获取诊断数据
-    diagnosis AS (
-        SELECT diagnosis
-        FROM GRAPH_TABLE (medical_kg
-            MATCH (v IS entity WHERE v.entity_name = :patient_name)
-                -[e IS relation WHERE e.relation_type IN ('入院诊断', '出院诊断')]-> (v2 IS entity)
-            COLUMNS (v2.entity_value AS diagnosis)
-        )
-    ),
-    -- 获取生命体征
-    vitals AS (
-        SELECT vital_sign
-        FROM GRAPH_TABLE (medical_kg
-            MATCH (v IS entity WHERE v.entity_name = :patient_name)
-                -[e IS relation WHERE e.relation_type = '生命体征']-> (v2 IS entity)
-            COLUMNS (v2.entity_value AS vital_sign)
-        )
-    ),
-    -- 获取生化指标
-    labs AS (
-        SELECT lab_result
-        FROM GRAPH_TABLE (medical_kg
-            MATCH (v IS entity WHERE v.entity_name = :patient_name)
-                -[e IS relation WHERE e.relation_type = '生化指标']-> (v2 IS entity)
-            COLUMNS (v2.entity_value AS lab_result)
+    SELECT 
+        patient_name,
+        COUNT(CASE WHEN relation_type = '现病史' THEN 1 END) as symptom_count,
+        COUNT(CASE WHEN relation_type IN ('入院诊断', '出院诊断') THEN 1 END) as diagnosis_count,
+        COUNT(CASE WHEN relation_type = '生命体征' THEN 1 END) as vital_sign_count,
+        COUNT(CASE WHEN relation_type = '生化指标' THEN 1 END) as lab_result_count
+    FROM GRAPH_TABLE (medical_kg
+        MATCH
+        (v IS entity) -[e IS relation]-> (v2 IS entity)
+        COLUMNS (
+            v.entity_name AS patient_name,
+            e.relation_type AS relation_type
         )
     )
-    -- 组合所有数据
-    SELECT 
-        :patient_name AS patient_name,
-        h.symptom,
-        d.diagnosis,
-        v.vital_sign,
-        l.lab_result
-    FROM history h
-    FULL OUTER JOIN diagnosis d ON 1=1
-    FULL OUTER JOIN vitals v ON 1=1
-    FULL OUTER JOIN labs l ON 1=1
-    WHERE 
-        CASE 
-            WHEN :data_type1 = '现病史' AND :data_type2 = '诊断' THEN 
-                h.symptom IS NOT NULL AND d.diagnosis IS NOT NULL
-            WHEN :data_type1 = '现病史' AND :data_type2 = '生命体征' THEN 
-                h.symptom IS NOT NULL AND v.vital_sign IS NOT NULL
-            WHEN :data_type1 = '现病史' AND :data_type2 = '生化指标' THEN 
-                h.symptom IS NOT NULL AND l.lab_result IS NOT NULL
-            WHEN :data_type1 = '诊断' AND :data_type2 = '生命体征' THEN 
-                d.diagnosis IS NOT NULL AND v.vital_sign IS NOT NULL
-            WHEN :data_type1 = '诊断' AND :data_type2 = '生化指标' THEN 
-                d.diagnosis IS NOT NULL AND l.lab_result IS NOT NULL
-            WHEN :data_type1 = '生命体征' AND :data_type2 = '生化指标' THEN 
-                v.vital_sign IS NOT NULL AND l.lab_result IS NOT NULL
-            ELSE 1=1
-        END
+    GROUP BY patient_name
+    ORDER BY patient_name
     """
-    params = {
-        "patient_name": "周某某",
-        "data_type1": "现病史",
-        "data_type2": "诊断"
-    }
-    results = query_executor.execute_graph_query(query, params)
+    results = query_executor.execute_graph_query(query)
     print(f"查询结果数量: {len(results)}")
     for row in results:
         print(row)
