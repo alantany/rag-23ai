@@ -1,0 +1,69 @@
+Collecting pypgx
+  Using cached pypgx-0.25.0-py3-none-any.whl.metadata (38 kB)
+Collecting fuc (from pypgx)
+  Using cached fuc-0.38.0-py3-none-any.whl.metadata (16 kB)
+Requirement already satisfied: scikit-learn in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from pypgx) (1.5.2)
+Collecting biopython (from fuc->pypgx)
+  Using cached biopython-1.84-cp311-cp311-macosx_10_9_x86_64.whl.metadata (12 kB)
+Requirement already satisfied: lxml in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (5.3.0)
+Requirement already satisfied: matplotlib in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (3.9.2)
+Collecting matplotlib-venn (from fuc->pypgx)
+  Using cached matplotlib-venn-1.1.1.tar.gz (40 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: numpy in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (1.26.2)
+Requirement already satisfied: pandas in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (2.1.4)
+Collecting pyranges (from fuc->pypgx)
+  Using cached pyranges-0.1.2-py3-none-any.whl.metadata (3.6 kB)
+Collecting pysam (from fuc->pypgx)
+  Using cached pysam-0.22.1-cp311-cp311-macosx_10_9_x86_64.whl.metadata (1.5 kB)
+Requirement already satisfied: scipy in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (1.14.1)
+Requirement already satisfied: seaborn in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (0.13.2)
+Requirement already satisfied: statsmodels in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from fuc->pypgx) (0.14.4)
+Requirement already satisfied: joblib>=1.2.0 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from scikit-learn->pypgx) (1.4.2)
+Requirement already satisfied: threadpoolctl>=3.1.0 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from scikit-learn->pypgx) (3.5.0)
+Requirement already satisfied: contourpy>=1.0.1 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (1.3.0)
+Requirement already satisfied: cycler>=0.10 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (0.12.1)
+Requirement already satisfied: fonttools>=4.22.0 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (4.54.1)
+Requirement already satisfied: kiwisolver>=1.3.1 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (1.4.7)
+Requirement already satisfied: packaging>=20.0 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (23.2)
+Requirement already satisfied: pillow>=8 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (10.4.0)
+Requirement already satisfied: pyparsing>=2.3.1 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (3.1.4)
+Requirement already satisfied: python-dateutil>=2.7 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from matplotlib->fuc->pypgx) (2.9.0.post0)
+Requirement already satisfied: pytz>=2020.1 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from pandas->fuc->pypgx) (2024.2)
+Requirement already satisfied: tzdata>=2022.1 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from pandas->fuc->pypgx) (2024.1)
+Collecting ncls>=0.0.63 (from pyranges->fuc->pypgx)
+  Using cached ncls-0.0.68-cp311-cp311-macosx_10_9_x86_64.whl.metadata (4.6 kB)
+Collecting tabulate (from pyranges->fuc->pypgx)
+  Using cached tabulate-0.9.0-py3-none-any.whl.metadata (34 kB)
+Collecting sorted-nearest>=0.0.33 (from pyranges->fuc->pypgx)
+  Using cached sorted_nearest-0.0.39-cp311-cp311-macosx_10_9_x86_64.whl.metadata (964 bytes)
+Collecting natsort (from pyranges->fuc->pypgx)
+  Using cached natsort-8.4.0-py3-none-any.whl.metadata (21 kB)
+Requirement already satisfied: patsy>=0.5.6 in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from statsmodels->fuc->pypgx) (0.5.6)
+Requirement already satisfied: six in /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages (from patsy>=0.5.6->statsmodels->fuc->pypgx) (1.16.0)
+Using cached pypgx-0.25.0-py3-none-any.whl (554 kB)
+Using cached fuc-0.38.0-py3-none-any.whl (154 kB)
+Using cached biopython-1.84-cp311-cp311-macosx_10_9_x86_64.whl (2.8 MB)
+Downloading pyranges-0.1.2-py3-none-any.whl (1.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.5/1.5 MB 1.8 MB/s eta 0:00:00
+Downloading pysam-0.22.1-cp311-cp311-macosx_10_9_x86_64.whl (8.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 8.4/8.4 MB 7.8 MB/s eta 0:00:00
+Downloading ncls-0.0.68-cp311-cp311-macosx_10_9_x86_64.whl (850 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 850.9/850.9 kB 6.5 MB/s eta 0:00:00
+Downloading sorted_nearest-0.0.39-cp311-cp311-macosx_10_9_x86_64.whl (2.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.2/2.2 MB 6.8 MB/s eta 0:00:00
+Downloading natsort-8.4.0-py3-none-any.whl (38 kB)
+Downloading tabulate-0.9.0-py3-none-any.whl (35 kB)
+Building wheels for collected packages: matplotlib-venn
+  Building wheel for matplotlib-venn (pyproject.toml): started
+  Building wheel for matplotlib-venn (pyproject.toml): finished with status 'done'
+  Created wheel for matplotlib-venn: filename=matplotlib_venn-1.1.1-py3-none-any.whl size=45289 sha256=19c1d6b68d22bb900d699158f9c211d1448d8d61406c0b3d1abb6e353236dc4d
+  Stored in directory: /Users/huaiyuantan/Library/Caches/pip/wheels/08/28/f0/0a3240d632a27df6da04d2888a6b058c37e1cbbb425ec5d2cc
+Successfully built matplotlib-venn
+Installing collected packages: tabulate, sorted-nearest, pysam, ncls, natsort, biopython, pyranges, matplotlib-venn, fuc, pypgx
+Successfully installed biopython-1.84 fuc-0.38.0 matplotlib-venn-1.1.1 natsort-8.4.0 ncls-0.0.68 pypgx-0.25.0 pyranges-0.1.2 pysam-0.22.1 sorted-nearest-0.0.39 tabulate-0.9.0

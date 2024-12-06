@@ -6,6 +6,10 @@
 2. 基于结构化JSON的精确检索(含全文索引)
 3. 基于知识图谱的关系检索
 
+本系统提供了四种智能检索方式:
+
+4. 基于Oracle Property Graph的图模式检索
+
 ## 系统架构
 
 系统基于以下技术栈:
@@ -13,6 +17,7 @@
 - Oracle Database: 后端数据存储
 - OpenAI API: 自然语言处理
 - Sentence Transformers: 文本向量化
+- Oracle Property Graph: 图数据存储和查询
 
 ## 检索功能说明
 
@@ -292,6 +297,110 @@ WHERE p.entity_type = '患者'
   AND rd.relation_type = 'HAS_ADMISSION_DIAGNOSIS'
   AND rs.relation_type = 'HAS_SYMPTOM';
 ```
+
+### 4. Property Graph检索
+
+基于Oracle Property Graph技术实现的图模式检索:
+
+#### 技术方案
+- 使用Oracle Property Graph存储实体和关系
+- 支持PGQL(Property Graph Query Language)查询
+- 适合复杂的图模式匹配和路径查询
+- 与传统图数据库检索互补，提供更强大的图分析能力
+
+#### 数据模型
+Property Graph创建:
+```sql
+CREATE PROPERTY GRAPH medical_kg VERTEX TABLES (
+    medical_entities KEY (entity_id) LABEL entity PROPERTIES ALL COLUMNS
+) EDGE TABLES (
+    medical_relations KEY (relation_id)
+        SOURCE KEY (from_entity_id) REFERENCES medical_entities (entity_id)
+        DESTINATION KEY (to_entity_id) REFERENCES medical_entities (entity_id)
+        LABEL relation PROPERTIES ALL COLUMNS
+);
+```
+
+#### 查询示例
+1. 基本的图模式查询:
+```sql
+SELECT * FROM GRAPH_TABLE (medical_kg
+    MATCH
+    (v IS entity) -[e IS relation]-> (v2 IS entity)
+    COLUMNS (
+        v.entity_name AS source_name,
+        v.entity_type AS source_type,
+        e.relation_type AS relation,
+        v2.entity_name AS target_name
+    )
+);
+```
+
+2. 查询特定患者的所有关系:
+```sql
+SELECT * FROM GRAPH_TABLE (medical_kg
+    MATCH
+    (v IS entity WHERE v.entity_name = '马某某') -[e IS relation]-> (v2 IS entity)
+    COLUMNS (
+        e.relation_type AS record_type,
+        v2.entity_type AS info_type,
+        v2.entity_value AS detail
+    )
+);
+```
+
+3. 按关系类型统计:
+```sql
+SELECT relation_type, COUNT(*) as count
+FROM GRAPH_TABLE (medical_kg
+    MATCH
+    (v IS entity) -[e IS relation]-> (v2 IS entity)
+    COLUMNS (
+        e.relation_type AS relation_type
+    )
+)
+GROUP BY relation_type
+ORDER BY count DESC;
+```
+
+#### 与其他检索方式的对比
+
+1. 向量检索
+- 优势：语义相似度匹配，适合自然语言查询
+- 场景：模糊查询，相似内容查找
+
+2. JSON结构化检索
+- 优势：精确字段匹配，支持复杂条件组合
+- 场景：精确查询，多条件筛选
+
+3. 关系型图检索
+- 优势：基础的实体关系查询，支持SQL标准
+- 场景：简单的关系查询，与现有系统集成
+
+4. Property Graph检索
+- 优势：复杂图模式匹配，路径查询，图算法支持
+- 场景：复杂关系分析，知识推理，图模式匹配
+
+## 多模态检索策略
+
+系统根据查询特点自动选择或组合最适合的检索方式：
+
+1. 语义理解类查询：使用向量检索
+   - "找一下类似发热伴有咳嗽的病例"
+   - "查询与某个病例相似的案例"
+
+2. 精确匹配类查询：使用JSON检索
+   - "查找主诉为发热的患者"
+   - "找出白细胞大于10的检验结果"
+
+3. 简单关系类查询：使用关系型图检索
+   - "查询患者的主诉"
+   - "列出患者的所有症状"
+
+4. 复杂图模式查询：使用Property Graph检索
+   - "找出具有相同症状的所有患者"
+   - "查询症状与诊断之间的关联模式"
+   - "分析症状之间的共现关系"
 
 ## 数据导入导出
 

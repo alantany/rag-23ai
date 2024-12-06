@@ -193,7 +193,7 @@ class MedicalRecordParser:
     "主诉": "主要症状",
     "现病史": ["症状1", "症状2"],
     "入诊": ["诊断1", "诊断2"],
-    "出院诊断": ["断1", "诊断2"],
+    "出院诊": ["断1", "诊断2"],
     "生命体征": {{
         "体温": "包含单位",
         "血压": "包含单位"
@@ -231,7 +231,7 @@ class MedicalRecordParser:
             
             # 验证结果格式
             if not isinstance(result, dict) or 'structured_data' not in result or 'sql_statement' not in result:
-                raise ValueError("GPT返回的数据格式不正确")
+                raise ValueError("GPT返回���数据格式不正确")
 
             # 添加元数据
             if 'metadata' not in result['structured_data']:
@@ -346,7 +346,7 @@ def analyze_query_with_gpt(query_text):
         "天冬氨酸氨基转移酶": "值和单位",
         "丙氨酸氨基转移酶": "值和单位",
         "白细胞": "值和单位",
-        "淋巴细胞百分比": "值单位",
+        "淋巴细��分比": "值单位",
         "中性粒细胞百分比": "值和单位",
         "血红蛋白": "值和单位",
         "血小板": "值和单位"
@@ -380,7 +380,7 @@ Oracle 23c JSON查询特：
 
 你的任务是：
 1. 理解用户的自然语言查询
-2. 根据文档结构和Oracle 23c特性，生成最优的查询条件
+2. 根据档结构和Oracle 23c特性，生成最优的查询条件
 3. 对于医学术语，考虑同义词和简写（如"转氨酶"可能指"天冬氨酸氨基转移酶"或"丙氨酸氨基转移酶"）
 4. 返回格式为JSON：
 {{
@@ -452,13 +452,13 @@ Oracle 23c JSON查询特：
 TOP_K = 5  # 搜索结果返回的最大数量
 
 def normalize_medical_term(query_text):
-    """使用 GPT 将用户查询的标名称标准化"""
+    """使用 GPT 将用�����询的标名称标准化"""
     try:
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'), base_url=os.getenv('OPENAI_API_BASE'))
         
         messages = [
             {"role": "system", "content": """你是一个医疗指标名称标准化专家。
-请将用户查询中的指标名称为标准的疗标称
+请将用户查询中的指标名称为标的疗标称
 
 规则：
 1. 查询中包含某个检验指标的同义词或近义词，返回标准名称
@@ -470,7 +470,7 @@ def normalize_medical_term(query_text):
 输出：{"standard_term": "淋巴细胞百分比"}
 
 输入："白细胞计数"
-输出：{"standard_term": "白细胞"}
+输出：{"standard_term": "白���胞"}
 
 输入："血红蛋白含量"
 输出：{"standard_term": "血红蛋白"}"""},
@@ -655,7 +655,7 @@ def generate_answer(query_text, doc_json, content=None):
         
     except Exception as e:
         logger.error(f"生成答案失败: {str(e)}")
-        return "抱歉，处理您的问题时出现错误"
+        return "抱歉，处理��的问题时出现错误"
 
 def display_search_results(query_text, results):
     """显示搜索结果"""
@@ -722,7 +722,7 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
         {json.dumps(patient_data, ensure_ascii=False, indent=2)}
 
         你需要分析用户的查询意图，返回一个JSON对象（不要添加任何markdown格式或代码块标记），包含以下字段：
-        - query_type: 查询类型，必须��以下之一：基本信息/主诉与诊断/现病史/生命体征/生化指标/诊疗经过
+        - query_type: 查询类型，必���以下之一：基本信息/主诉与诊断/现病史/生命体征/生化指标/诊疗经过
         - field: 具体查询的字段名，如果是查询整个类别，请返回"all"
         - patient_name: 患者姓名
         - explanation: 查询意图的解释
@@ -735,7 +735,7 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
             "explanation": "查询患者的所有基本信息"
         }}
 
-        如果是查询某个类别的所有信息（如"生化指标"、"主诉与诊断"等），请将field设置为"all"。
+        如果是查询个类别的所有信息（如"生化指标"、"主诉与诊断"等），请将field设置为"all"。
         如果是查询具体的指标或症状（如"白细胞"、"血压"等），请将field设置为具体的指标名称。
 
         请分析这个查询并返回JSON（不要添加markdown格式）
@@ -811,7 +811,7 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
             # 验证query_type是否为有效值
             valid_query_types = ["基本信息", "主诉与诊断", "现病史", "生命体征", "生化指标", "诊疗经过"]
             if result["query_type"] not in valid_query_types:
-                logger.warning(f"无效的query_type: {result['query_type']}, 使用默认值")
+                logger.warning(f"无效��query_type: {result['query_type']}, 使用默认值")
                 result["query_type"] = "基本信息"
             
             # 确保patient_name与查询中识别的一致
@@ -1146,7 +1146,6 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
         
         # 添加患者节点（中心节点）
         patient_name = patient_info.get('姓名', '未知患者')
-        st.write(f"正在处理患者: {patient_name}")  # 调试信息
         
         net.add_node(patient_name, 
                     label=patient_name,
@@ -1157,7 +1156,6 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
         # 添加基本信息节点
         basic_info = patient_info.get('基本信息', {})
         if basic_info:
-            st.write("添加基本信息节点")  # 调试信息
             for key, value in basic_info.items():
                 node_id = f'basic_{key}'
                 net.add_node(node_id,
@@ -1169,7 +1167,6 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
         
         # 添加主诉与诊断节点
         if '主诉与诊断' in patient_info:
-            st.write("添加主诉与诊断节点")  # 调试信息
             for i, item in enumerate(patient_info['主诉与诊断']):
                 node_id = f'diag_{i}'
                 net.add_node(node_id,
@@ -1181,7 +1178,6 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
         
         # 添加现病史节点
         if '现病史' in patient_info:
-            st.write("添加现病史节点")  # 调试信息
             for i, item in enumerate(patient_info['现病史']):
                 node_id = f'hist_{i}'
                 net.add_node(node_id,
@@ -1190,10 +1186,9 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
                             size=20,
                             shape='box')
                 net.add_edge(patient_name, node_id, title='现病史')
-        
-        # 添加生命体征节点
+
+        # 添加生命体征���点
         if '生命体征' in patient_info:
-            st.write("添加生命体征节点")  # 调试信息
             for i, item in enumerate(patient_info['生命体征']):
                 node_id = f'vital_{i}'
                 net.add_node(node_id,
@@ -1203,9 +1198,8 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
                             shape='box')
                 net.add_edge(patient_name, node_id, title='生命体征')
         
-        # 添加生化指标节点
+        # 添��生化指标节点
         if '生化指标' in patient_info:
-            st.write("添加生化指标节点")  # 调试信息
             for i, item in enumerate(patient_info['生化指标']):
                 node_id = f'biochem_{i}'
                 net.add_node(node_id,
@@ -1219,14 +1213,11 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as f:
             try:
                 net.save_graph(f.name)
-                st.write(f"图形已保存到: {f.name}")  # 调试信息
                 return f.name
             except Exception as e:
-                st.error(f"保存图形时出错: {str(e)}")  # 调试信息
                 raise
                 
     except Exception as e:
-        st.error(f"生成图形时出错: {str(e)}")  # 调试信息
         raise
 
 def display_parsed_documents():
@@ -1389,7 +1380,7 @@ def display_structured_search():
             table_exists = result[0]['count'] > 0 if result else False
             
             if not table_exists:
-                st.warning("数据库未初始化，请先在文档管理中上传并结构化文档")
+                st.warning("数据库未初始化，请先��文档管理中上传并结构化文档")
                 return
             
             # 获取所有文档
@@ -1509,6 +1500,279 @@ def display_structured_search():
             logger.error(f"检索文档时发生错误: {str(e)}")
             st.error(f"检索文档时发生错误: {str(e)}")
 
+def display_property_graph_search():
+    """��示属性图检索界面"""
+    st.header("属性图检索")
+    
+    # 创建标签页
+    tab1, tab2 = st.tabs(["查询模板", "自定义查询"])
+    
+    with tab1:
+        st.subheader("常用查询模板")
+        query_type = st.selectbox(
+            "选择查询类型",
+            [
+                "患者相似症状分析",
+                "患者生化指标异常关联",
+                "患者诊断关系网络",
+                "患者用药关联分析",
+                "患者治疗方案对比"
+            ]
+        )
+        
+        if query_type == "患者相似症状分析":
+            patient_name = st.selectbox("选择患者", ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"])
+            if st.button("分析"):
+                with st.spinner("正在分析相似症状..."):
+                    try:
+                        with OracleGraphStore() as graph_store:
+                            # 使用PGQL查询相似症状
+                            query = """
+                            v1.entity_name AS patient1, 
+                            v2.entity_name AS patient2,
+                            e1.relation_type AS symptom1,
+                            e2.relation_type AS symptom2
+                            MATCH (v1) -[e1]-> () <-[e2]- (v2)
+                            WHERE v1.entity_type = 'PATIENT' 
+                              AND v2.entity_type = 'PATIENT'
+                              AND v1.entity_name = :patient_name
+                              AND v1.entity_name != v2.entity_name
+                              AND e1.relation_type = '现病史'
+                              AND e2.relation_type = '现病史'
+                            """
+                            results = graph_store.execute_pgql(query, {"patient_name": patient_name})
+                            if results:
+                                st.success(f"找到 {len(results)} 个相似症状")
+                                for result in results:
+                                    st.write(f"- {result['patient2']} 也有 '{result['symptom1']}' 症状")
+                            else:
+                                st.info("未找到相似症状")
+                    except Exception as e:
+                        st.error(f"分析失败: {str(e)}")
+                        
+        elif query_type == "患者生化指标异常关联":
+            patient_name = st.selectbox("选择患者", ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"])
+            if st.button("分析"):
+                with st.spinner("正在分析生化指标异常关联..."):
+                    try:
+                        with OracleGraphStore() as graph_store:
+                            # 使用PGQL查询异常生化指标
+                            query = """
+                            SELECT DISTINCT 
+                                v.entity_name as patient,
+                                e.indicator_name as indicator,
+                                e.value as value,
+                                e.unit as unit,
+                                e.reference_range as reference
+                            FROM (v) -[e:HAS_INDICATOR]-> ()
+                            WHERE v.entity_type = 'PATIENT'
+                            AND v.entity_name = :patient_name
+                            AND e.reference_range = '异常'
+                            """
+                            results = graph_store.execute_pgql(query, {"patient_name": patient_name})
+                            if results:
+                                st.success(f"找到 {len(results)} 个异常指标")
+                                for result in results:
+                                    st.write(f"- {result['indicator']}: {result['value']}{result['unit']} (异常)")
+                            else:
+                                st.info("未找到异常指标")
+                    except Exception as e:
+                        st.error(f"分析失败: {str(e)}")
+                        
+        elif query_type == "患者诊断关系网络":
+            if st.button("分析"):
+                with st.spinner("正在分析诊断关系网络..."):
+                    try:
+                        with OracleGraphStore() as graph_store:
+                            # 使用PGQL查询诊断关系
+                            query = """
+                            SELECT DISTINCT 
+                                v1.entity_name AS patient1,
+                                v2.entity_name AS patient2,
+                                e1.relation_type AS diagnosis_type
+                            MATCH (v1) -[e1]-> () <-[e2]- (v2)
+                            WHERE v1.entity_type = 'PATIENT'
+                              AND v2.entity_type = 'PATIENT'
+                              AND v1.entity_name != v2.entity_name
+                              AND e1.relation_type IN ('入院诊断', '出院诊断')
+                              AND e2.relation_type = e1.relation_type
+                            """
+                            results = graph_store.execute_pgql(query)
+                            if results:
+                                # 创建网络图
+                                net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="black")
+                                
+                                # 添加节点和边
+                                nodes = set()
+                                for result in results:
+                                    patient1 = result['patient1']
+                                    patient2 = result['patient2']
+                                    diagnosis = result['diagnosis_type']
+                                    
+                                    if patient1 not in nodes:
+                                        net.add_node(patient1, label=patient1, color='#add8e6')
+                                        nodes.add(patient1)
+                                    if patient2 not in nodes:
+                                        net.add_node(patient2, label=patient2, color='#add8e6')
+                                        nodes.add(patient2)
+                                        
+                                    net.add_edge(patient1, patient2, title=diagnosis)
+                                
+                                # 保存并显示网络图
+                                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as f:
+                                    net.save_graph(f.name)
+                                    with open(f.name, 'r', encoding='utf-8') as f:
+                                        html_content = f.read()
+                                    components.html(html_content, height=600)
+                                    os.unlink(f.name)
+                            else:
+                                st.info("未找到诊断关系")
+                    except Exception as e:
+                        st.error(f"分析失败: {str(e)}")
+                        
+        elif query_type == "患者用药关联分析":
+            patient_name = st.selectbox("选择患者", ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"])
+            if st.button("分析"):
+                with st.spinner("正在分析用药关联..."):
+                    try:
+                        with OracleGraphStore() as graph_store:
+                            # 使用PGQL查询用药关联
+                            query = """
+                            SELECT DISTINCT 
+                                v1.entity_name AS patient1,
+                                v2.entity_name AS patient2,
+                                e1.relation_type AS medication_type
+                            MATCH (v1) -[e1]-> () <-[e2]- (v2)
+                            WHERE v1.entity_type = 'PATIENT'
+                              AND v2.entity_type = 'PATIENT'
+                              AND v1.entity_name = :patient_name
+                              AND v1.entity_name != v2.entity_name
+                              AND e1.relation_type = '用药记录'
+                              AND e2.relation_type = e1.relation_type
+                            """
+                            results = graph_store.execute_pgql(query, {"patient_name": patient_name})
+                            if results:
+                                st.success(f"找到 {len(results)} 个用药关联")
+                                for result in results:
+                                    st.write(f"- {result['patient2']} 也使用了 '{result['medication']}'")
+                            else:
+                                st.info("未找到用药关联")
+                    except Exception as e:
+                        st.error(f"分析失败: {str(e)}")
+                        
+        elif query_type == "患者治疗方案对比":
+            patient1 = st.selectbox("选择第一个患者", ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"])
+            patient2 = st.selectbox("选择第二个患者", ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"])
+            if patient1 != patient2 and st.button("对比"):
+                with st.spinner("正在对比治疗方案..."):
+                    try:
+                        with OracleGraphStore() as graph_store:
+                            # 使用PGQL查询治疗方案
+                            query = """
+                            SELECT 
+                                v.entity_name AS patient,
+                                e.relation_type AS treatment_type,
+                                t.entity_value AS treatment_detail
+                            MATCH (v) -[e]-> (t)
+                            WHERE v.entity_type = 'PATIENT'
+                              AND v.entity_name IN (:patient1, :patient2)
+                              AND e.relation_type = '诊疗经过'
+                            """
+                            results = graph_store.execute_pgql(query, {
+                                "patient1": patient1,
+                                "patient2": patient2
+                            })
+                            
+                            if results:
+                                # 按患者分组治疗方案
+                                treatments = {}
+                                for result in results:
+                                    patient = result['patient']
+                                    if patient not in treatments:
+                                        treatments[patient] = []
+                                    treatments[patient].append({
+                                        'treatment': result['treatment_detail'],
+                                        'effect': result['effect']
+                                    })
+                                
+                                # 显示对比结果
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.subheader(patient1)
+                                    if patient1 in treatments:
+                                        for t in treatments[patient1]:
+                                            st.write(f"- {t['treatment']} (效果: {t['effect']})")
+                                    else:
+                                        st.info("无治疗方案记录")
+                                        
+                                with col2:
+                                    st.subheader(patient2)
+                                    if patient2 in treatments:
+                                        for t in treatments[patient2]:
+                                            st.write(f"- {t['treatment']} (效果: {t['effect']})")
+                                    else:
+                                        st.info("无治疗方案记录")
+                            else:
+                                st.info("未找到治疗方案记录")
+                    except Exception as e:
+                        st.error(f"对比失败: {str(e)}")
+    
+    with tab2:
+        st.subheader("自定义PGQL查询")
+        st.markdown("""
+        您可以输入自定义的PGQL查询语句。以下是一些示例：
+        
+        1. 查询患者的所有症状：
+        ```sql
+        SELECT v.entity_name, e.symptom
+        FROM MATCH (v) -[e:HAS_SYMPTOM]-> ()
+        WHERE v.entity_type = 'PATIENT'
+        ```
+        
+        2. 查询特定症状的所有患者：
+        ```sql
+        SELECT v.entity_name
+        FROM MATCH (v) -[e:HAS_SYMPTOM]-> ()
+        WHERE v.entity_type = 'PATIENT'
+        AND e.symptom = '发热'
+        ```
+        
+        3. 查询患者的异常生化指标：
+        ```sql
+        SELECT v.entity_name, e.indicator_name, e.value
+        FROM MATCH (v) -[e:HAS_INDICATOR]-> ()
+        WHERE v.entity_type = 'PATIENT'
+        AND e.reference_range = '异常'
+        ```
+        """)
+        
+        query = st.text_area("输入PGQL查询语句", height=150)
+        params = st.text_input("输入参数（JSON格式，可选）", "{}")
+        
+        if st.button("执行查询"):
+            if query:
+                with st.spinner("正在执行查询..."):
+                    try:
+                        # 解析参数
+                        try:
+                            params = json.loads(params) if params.strip() else {}
+                        except json.JSONDecodeError:
+                            st.error("参数格式错误，请使用有效的JSON格式")
+                            return
+                        
+                        # 执行查询
+                        with OracleGraphStore() as graph_store:
+                            results = graph_store.execute_pgql(query, params)
+                            if results:
+                                st.success(f"查询成功，返回 {len(results)} 条结果")
+                                st.json(results)
+                            else:
+                                st.info("查询未返回任何结果")
+                    except Exception as e:
+                        st.error(f"查询失败: {str(e)}")
+            else:
+                st.warning("请输入查询语句")
+
 def main():
     st.title("医疗文档智能检索系统")
     
@@ -1518,7 +1782,7 @@ def main():
     # 创建侧边栏菜单
     menu = st.sidebar.selectbox(
         "功能菜单",
-        ["文档管理", "图数据检索", "向量检索", "结构化检索"]
+        ["文档管理", "图数据检索", "向量检索", "结构化检索", "属性图检索"]
     )
     
     if menu == "文档管理":
@@ -1535,6 +1799,8 @@ def main():
             display_graph_results(results, query)
     elif menu == "向量检索":
         display_vector_search()
+    elif menu == "属性图检索":
+        display_property_graph_search()
     else:  # 结构化检索
         display_structured_search()
 

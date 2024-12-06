@@ -5,12 +5,13 @@ This module converts natural language queries into Property Graph queries.
 """
 
 import json
-import re
-from typing import Dict, Any, List, Optional, Tuple
-from openai import OpenAI
 import os
+from typing import Dict, Any, Tuple
+from openai import OpenAI
 from dotenv import load_dotenv
+import logging
 
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 class GraphQueryParser:
@@ -73,134 +74,134 @@ class GraphQueryParser:
                 ORDER BY count DESC
             """,
             
-            # 复杂查询模板
-            "patients_with_symptom": """
-                SELECT DISTINCT v.entity_name AS patient_name, v2.entity_value AS symptom
-                FROM GRAPH_TABLE (medical_kg
-                    MATCH
-                    (v IS entity) -[e IS relation WHERE e.relation_type = '现病史']-> (v2 IS entity)
-                    WHERE v2.entity_value LIKE '%:symptom%'
-                    COLUMNS (
-                        v.entity_name,
-                        v2.entity_value
-                    )
-                )
-            """,
-            "similar_symptoms_patients": """
-                WITH patient_symptoms AS (
+            # 医疗数据关联性分析模板
+            "medical_data_correlation": """
+                WITH 
+                -- 获取病史数据
+                history AS (
                     SELECT v2.entity_value AS symptom
                     FROM GRAPH_TABLE (medical_kg
-                        MATCH
-                        (v IS entity WHERE v.entity_name = :patient_name) 
+                        MATCH (v IS entity WHERE v.entity_name = :patient_name)
                             -[e IS relation WHERE e.relation_type = '现病史']-> (v2 IS entity)
-                        COLUMNS (
-                            v2.entity_value AS symptom
-                        )
+                        COLUMNS (v2.entity_value)
+                    )
+                ),
+                -- 获取诊断数据
+                diagnosis AS (
+                    SELECT v2.entity_value AS diagnosis
+                    FROM GRAPH_TABLE (medical_kg
+                        MATCH (v IS entity WHERE v.entity_name = :patient_name)
+                            -[e IS relation WHERE e.relation_type IN ('入院诊断', '出院诊断')]-> (v2 IS entity)
+                        COLUMNS (v2.entity_value)
+                    )
+                ),
+                -- 获取生命体征
+                vitals AS (
+                    SELECT v2.entity_value AS vital_sign
+                    FROM GRAPH_TABLE (medical_kg
+                        MATCH (v IS entity WHERE v.entity_name = :patient_name)
+                            -[e IS relation WHERE e.relation_type = '生命体征']-> (v2 IS entity)
+                        COLUMNS (v2.entity_value)
+                    )
+                ),
+                -- 获取生化指标
+                labs AS (
+                    SELECT v2.entity_value AS lab_result
+                    FROM GRAPH_TABLE (medical_kg
+                        MATCH (v IS entity WHERE v.entity_name = :patient_name)
+                            -[e IS relation WHERE e.relation_type = '生化指标']-> (v2 IS entity)
+                        COLUMNS (v2.entity_value)
                     )
                 )
-                SELECT DISTINCT v.entity_name AS similar_patient
-                FROM GRAPH_TABLE (medical_kg
-                    MATCH
-                    (v IS entity) -[e IS relation WHERE e.relation_type = '现病史']-> (v2 IS entity)
-                    WHERE v2.entity_value IN (SELECT symptom FROM patient_symptoms)
-                        AND v.entity_name != :patient_name
-                    COLUMNS (
-                        v.entity_name
-                    )
-                )
+                -- 组合所有数据
+                SELECT 
+                    :patient_name AS patient_name,
+                    h.symptom,
+                    d.diagnosis,
+                    v.vital_sign,
+                    l.lab_result
+                FROM history h
+                FULL OUTER JOIN diagnosis d ON 1=1
+                FULL OUTER JOIN vitals v ON 1=1
+                FULL OUTER JOIN labs l ON 1=1
+                WHERE 
+                    CASE 
+                        WHEN :data_type1 = '现病史' AND :data_type2 = '诊断' THEN 
+                            h.symptom IS NOT NULL AND d.diagnosis IS NOT NULL
+                        WHEN :data_type1 = '现病史' AND :data_type2 = '生命体征' THEN 
+                            h.symptom IS NOT NULL AND v.vital_sign IS NOT NULL
+                        WHEN :data_type1 = '现病史' AND :data_type2 = '生化指标' THEN 
+                            h.symptom IS NOT NULL AND l.lab_result IS NOT NULL
+                        WHEN :data_type1 = '诊断' AND :data_type2 = '生命体征' THEN 
+                            d.diagnosis IS NOT NULL AND v.vital_sign IS NOT NULL
+                        WHEN :data_type1 = '诊断' AND :data_type2 = '生化指标' THEN 
+                            d.diagnosis IS NOT NULL AND l.lab_result IS NOT NULL
+                        WHEN :data_type1 = '生命体征' AND :data_type2 = '生化指标' THEN 
+                            v.vital_sign IS NOT NULL AND l.lab_result IS NOT NULL
+                        ELSE 1=1
+                    END
             """
         }
-        
-        # 定义关键词到模板的映射
-        self.keyword_templates = {
-            "所有信息": "patient_info",
-            "症状": "patient_symptoms",
-            "诊疗经过": "treatment_process",
-            "统计": "common_symptoms",
-            "常见": "common_symptoms",
-            "有相同症状": "similar_symptoms_patients",
-            "查询有": "patients_with_symptom"
-        }
-
-    def extract_params(self, query: str, template_name: str) -> Dict[str, Any]:
-        """
-        Extract parameters from the query based on template.
-        
-        Args:
-            query (str): Natural language query
-            template_name (str): Name of the query template
-            
-        Returns:
-            Dict[str, Any]: Extracted parameters
-        """
-        params = {}
-        
-        # 提取患者姓名
-        if template_name in ["patient_info", "patient_symptoms", "treatment_process", "similar_symptoms_patients"]:
-            patient_match = re.search(r'([张李王赵马蒲周杨刘]某某)', query)
-            if patient_match:
-                params["patient_name"] = patient_match.group(1)
-        
-        # 提取症状
-        if template_name == "patients_with_symptom":
-            symptom_match = re.search(r'有(.+?)症状', query)
-            if symptom_match:
-                params["symptom"] = symptom_match.group(1)
-        
-        return params
 
     def parse_query(self, query: str) -> Tuple[str, Dict[str, Any]]:
         """
-        Parse natural language query into a graph query.
+        使用大模型解析自然语言查询意图。
         
         Args:
-            query (str): Natural language query
+            query (str): 自然语言查询
             
         Returns:
-            Tuple[str, Dict[str, Any]]: Query template name and parameters
+            Tuple[str, Dict[str, Any]]: 查询模板名称和参数
         """
         try:
-            # 首先尝试基于关键词匹配
-            template_name = None
-            for keyword, template in self.keyword_templates.items():
-                if keyword in query:
-                    template_name = template
+            # 从查询中提取患者姓名
+            patient_name = None
+            for name in ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"]:
+                if name in query:
+                    patient_name = name
                     break
-            
-            # 如果找到了模板，提取参数
-            if template_name:
-                params = self.extract_params(query, template_name)
-                return template_name, params
-            
-            # 如果关键词匹配失败，使用OpenAI
+                    
+            if not patient_name:
+                logger.warning("未能从查询中识别出患者姓名")
+                return "patient_info", {}
+                
+            # 构建提示词
             prompt = f"""
-            请将以下自然语言查询转换为图数据库查询。
-            
-            可用的查询模板有：
+            请分析以下医疗查询,返回查询意图和参数。请确保返回JSON格式的结果。
+
+            查询文本: {query}
+
+            可用的查询模板:
             1. patient_info - 查询患者的所有信息
             2. patient_symptoms - 查询患者的症状
             3. treatment_process - 查询患者的诊疗经过
             4. common_symptoms - 查询常见症状统计
-            5. patients_with_symptom - 查询具有特定症状的患者
-            6. similar_symptoms_patients - 查询具有相似症状的患者
-            
-            自然语言查询：{query}
-            
-            请以JSON格式返回：
+            5. medical_data_correlation - 查询医疗数据关联性分析
+
+            如果是查询数据关联性,请返回:
+            {{
+                "template": "medical_data_correlation",
+                "params": {{
+                    "patient_name": "{patient_name}",
+                    "data_type1": "现病史/诊断/生命体征/生化指标",
+                    "data_type2": "现病史/诊断/生命体征/生化指标"
+                }}
+            }}
+
+            如果是其他查询,请返回:
             {{
                 "template": "模板名称",
                 "params": {{
-                    "参数名": "参数值"
-                }},
-                "explanation": "选择原因解释"
+                    "patient_name": "{patient_name}"
+                }}
             }}
             """
             
-            # 调用OpenAI API
+            # 调用 OpenAI API
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个专门将自然语言转换为图数据库查询的AI助手。"},
+                    {"role": "system", "content": "你是一个专门解析医疗查询意图的AI助手。请确保返回JSON格式的结果。"},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0
@@ -208,41 +209,54 @@ class GraphQueryParser:
             
             # 解析返回结果
             result = json.loads(response.choices[0].message.content)
+            logger.info(f"OpenAI API返回: {json.dumps(result, ensure_ascii=False)}")
             
-            # 验证模板是否存在
-            if result["template"] not in self.query_templates:
-                raise ValueError(f"Unknown template: {result['template']}")
+            if "template" not in result or "params" not in result:
+                raise ValueError("API返回格式错误")
                 
-            return result["template"], result["params"]
+            # 验证模板名称
+            template = result["template"]
+            if template not in self.query_templates:
+                logger.warning(f"未知的查询模板: {template}")
+                template = "patient_info"
+                
+            # 验证参数
+            params = result["params"]
+            if not isinstance(params, dict):
+                logger.warning("参数格式错误")
+                params = {"patient_name": patient_name}
+                
+            # 确保患者姓名参数存在
+            if "patient_name" not in params:
+                params["patient_name"] = patient_name
+                
+            # 对于数据关联性分析,验证数据类型参数
+            if template == "medical_data_correlation":
+                valid_types = ["现病史", "诊断", "生命体征", "生化指标"]
+                if "data_type1" not in params or params["data_type1"] not in valid_types:
+                    params["data_type1"] = "现病史"
+                if "data_type2" not in params or params["data_type2"] not in valid_types:
+                    params["data_type2"] = "诊断"
+                    
+            return template, params
             
         except Exception as e:
-            print(f"Error parsing query: {e}")
-            # 根据查询内容选择默认模板
-            if "症状" in query:
-                if "统计" in query or "常见" in query:
-                    return "common_symptoms", {}
-                elif "相同" in query or "相似" in query:
-                    return "similar_symptoms_patients", self.extract_params(query, "similar_symptoms_patients")
-                else:
-                    return "patient_symptoms", self.extract_params(query, "patient_symptoms")
-            elif "诊疗" in query or "治疗" in query:
-                return "treatment_process", self.extract_params(query, "treatment_process")
-            else:
-                return "patient_info", self.extract_params(query, "patient_info")
-            
+            logger.error(f"解析查询失败: {str(e)}")
+            return "patient_info", {"patient_name": patient_name if patient_name else "未知患者"}
+
     def get_graph_query(self, template_name: str, params: Dict[str, Any]) -> str:
         """
-        Get the actual graph query based on template and parameters.
+        根据模板和参数生成图查询语句。
         
         Args:
-            template_name (str): Name of the query template
-            params (Dict[str, Any]): Query parameters
+            template_name (str): 查询模板名称
+            params (Dict[str, Any]): 查询参数
             
         Returns:
-            str: The actual graph query
+            str: 图查询语句
         """
         if template_name not in self.query_templates:
-            raise ValueError(f"Unknown template: {template_name}")
+            raise ValueError(f"未知的查询模板: {template_name}")
             
         query_template = self.query_templates[template_name]
         
@@ -258,13 +272,13 @@ class GraphQueryParser:
 
     def process_query(self, query: str) -> Tuple[str, Dict[str, Any], str]:
         """
-        Process natural language query and return graph query.
+        处理自然语言查询。
         
         Args:
-            query (str): Natural language query
+            query (str): 自然语言查询
             
         Returns:
-            Tuple[str, Dict[str, Any], str]: Template name, parameters, and final query
+            Tuple[str, Dict[str, Any], str]: 模板名称、参数和最终查询语句
         """
         template_name, params = self.parse_query(query)
         graph_query = self.get_graph_query(template_name, params)

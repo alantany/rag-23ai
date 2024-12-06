@@ -44,7 +44,7 @@ class OracleGraphStore:
             raise
 
     def initialize_tables(self):
-        """初始化数据库表"""
+        """初始化数据库表和属性图"""
         try:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
@@ -69,10 +69,56 @@ class OracleGraphStore:
                     logger.error("MEDICAL_RELATIONS 表不存在，请先创建数据库表")
                     raise ValueError("数据库表未创建")
                 
-                logger.info("数据库表检查完成")
+                # 检查属性图是否存在
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM USER_PROPERTY_GRAPHS 
+                    WHERE GRAPH_NAME = 'medical_kg'
+                """)
+                if cursor.fetchone()[0] == 0:
+                    logger.info("属性图不存在，开始创建...")
+                    try:
+                        # 创建属性图
+                        cursor.execute("""
+                        CREATE PROPERTY GRAPH medical_kg
+                        VERTEX TABLES (
+                            medical_entities
+                            KEY (entity_id)
+                            PROPERTIES (
+                                entity_type,
+                                entity_name,
+                                entity_value,
+                                doc_ref,
+                                created_at
+                            )
+                        )
+                        EDGE TABLES (
+                            medical_relations
+                            KEY (relation_id)
+                            SOURCE KEY (from_entity_id) REFERENCES medical_entities(entity_id)
+                            DESTINATION KEY (to_entity_id) REFERENCES medical_entities(entity_id)
+                            PROPERTIES (
+                                relation_type,
+                                doc_reference,
+                                created_at
+                            )
+                        )
+                        """)
+                        connection.commit()
+                        logger.info("属性图创建成功")
+                    except Exception as e:
+                        if "ORA-00955" in str(e):  # 对象已存在
+                            logger.info("属性图已存在")
+                        else:
+                            logger.error(f"创建属性图失败: {str(e)}")
+                            raise
+                else:
+                    logger.info("属性图已存在")
+                
+                logger.info("数据库表和属性图检查完成")
                 
         except Exception as e:
-            logger.error(f"初始化数据库表失败: {str(e)}")
+            logger.error(f"初始化数据库表和属性图失败: {str(e)}")
             raise
 
     def clear_data(self):
@@ -99,7 +145,7 @@ class OracleGraphStore:
             raise
 
     def delete_document_data(self, doc_reference: str):
-        """删除指定文档的所有数据"""
+        """删除定文档的所有数据"""
         try:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
@@ -213,7 +259,7 @@ class OracleGraphStore:
                         "源类型": row[0],
                         "源名称": row[1],
                         "关系类型": row[2],
-                        "目标类型": row[3],
+                        "目": row[3],
                         "目标名称": row[4],
                         "目标值": row[5],
                         "时间": row[6].strftime('%Y-%m-%d') if row[6] else None
@@ -277,7 +323,7 @@ class OracleGraphStore:
                 
                 sql += " ORDER BY ENTITY_TIME DESC"
                 
-                # 执行查询
+                # 执行查
                 cursor.execute(sql, params)
                 
                 results = []
@@ -369,10 +415,10 @@ class OracleGraphStore:
                         "源名称": row[1],
                         "关系类型": row[2],
                         "目标类型": row[3],
-                        "目标名称": row[4],
+                        "目名称": row[4],
                         "目标值": row[5],
                         "时间": row[6].strftime('%Y-%m-%d') if row[6] else None,
-                        "文档引用": row[7]
+                        "档引用": row[7]
                     }
                     results.append(relation)
                 
@@ -389,7 +435,7 @@ class OracleGraphStore:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 
-                # 获取所有患者实体
+                # 获取有患者实体
                 sql = """
                     SELECT 
                         e.ENTITY_NAME,
@@ -421,7 +467,7 @@ class OracleGraphStore:
                         
                         # 解析患者信息
                         patient_info = json.loads(entity_value)
-                        logger.info(f"解析的患者信息: {patient_info}")
+                        logger.info(f"解��的患者信息: {patient_info}")
                         
                         # 构建患者数据
                         patient_data = {
@@ -432,11 +478,11 @@ class OracleGraphStore:
                                 "性别": patient_info.get("性别", "未知"),
                                 "年龄": patient_info.get("年龄", "未知"),
                                 "入院日期": patient_info.get("入院日期", "未知"),
-                                "出院日期": patient_info.get("出院日期", "未知")
+                                "出院日": patient_info.get("出院日期", "未知")
                             },
                             "主诉": patient_info.get("主诉", "未知"),
                             "现病史": patient_info.get("现病史", []),
-                            "入院诊断": patient_info.get("入院诊断", []),
+                            "院诊断": patient_info.get("入院诊断", []),
                             "出院诊断": patient_info.get("出院诊断", []),
                             "生命体征": patient_info.get("生命体征", {}),
                             "生化指标": patient_info.get("生化指标", {}),
@@ -458,7 +504,7 @@ class OracleGraphStore:
                             "主诉": "未知",
                             "现病史": [],
                             "入院诊断": [],
-                            "出院诊断": [],
+                            "院诊断": [],
                             "生命体征": {},
                             "生化指标": {},
                             "诊疗经过": "",
@@ -478,7 +524,7 @@ class OracleGraphStore:
             return []
 
     def get_all_patients(self) -> List[Dict[str, Any]]:
-        """获取有患者列表（get_patients 的别名）"""
+        """获取患者列表（get_patients 的别名）"""
         return self.get_patients()
 
     def search_relations(self, query_type: Optional[str] = None, 
@@ -616,7 +662,7 @@ class OracleGraphStore:
                     SELECT e.ENTITY_NAME, e.ENTITY_VALUE, e.ENTITY_TIME
                     FROM MEDICAL_ENTITIES e
                     WHERE e.DOC_REF = :1
-                    AND e.ENTITY_TYPE = '住院信息'
+                    AND e.ENTITY_TYPE = '住院息'
                     ORDER BY e.ENTITY_TIME
                 """, [doc_reference])
                 
@@ -630,7 +676,7 @@ class OracleGraphStore:
                 return {
                     "基本信息": patient_info.get("基本信息", {}),
                     "住信息": hospital_info,
-                    "主要诊断": diagnoses
+                    "主诊断": diagnoses
                 }
                 
         except Exception as e:
@@ -725,7 +771,7 @@ class OracleGraphStore:
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
                         (ENTITY_TYPE, ENTITY_NAME, ENTITY_VALUE, DOC_REF, CREATED_AT)
-                        VALUES ('入院诊断', '诊断', :value, :doc_ref, :created_at)
+                        VALUES ('入院诊断', '断', :value, :doc_ref, :created_at)
                         RETURNING ENTITY_ID INTO :id
                     """, {
                         'value': str(diagnosis),
@@ -775,7 +821,7 @@ class OracleGraphStore:
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                 
-                # 存储生命体征
+                # 存储生体征
                 vital_signs = data.get("生命体征", {})
                 if isinstance(vital_signs, dict):
                     for key, value in vital_signs.items():
@@ -806,7 +852,7 @@ class OracleGraphStore:
                             'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         })
                 
-                # 存储生化指标
+                # 储生化指标
                 biochemical_indicators = data.get("生化指标", {})
                 if isinstance(biochemical_indicators, dict):
                     for key, value in biochemical_indicators.items():
@@ -865,7 +911,7 @@ class OracleGraphStore:
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                 
-                # 存储出院医嘱
+                # 储出院医嘱
                 for advice in data.get("出院医嘱", []):
                     id_var = cursor.var(int)
                     cursor.execute("""
@@ -897,7 +943,7 @@ class OracleGraphStore:
                 logger.info(f"成功存储文档 {doc_reference} 的数据")
                 
         except Exception as e:
-            logger.error(f"存储医疗数据失败: {str(e)}")
+            logger.error(f"存储医疗数据��败: {str(e)}")
             raise
 
     def get_patient_info(self, patient_name: str) -> Dict[str, Any]:
@@ -947,7 +993,7 @@ class OracleGraphStore:
                     }
                     
                 except json.JSONDecodeError as e:
-                    logger.error(f"解析患者信息失败: {str(e)}, 原始数据: {entity_value}")
+                    logger.error(f"解析患者息失败: {str(e)}, 原始数据: {entity_value}")
                     return {
                         "姓名": row[0],
                         "文档": row[1]
@@ -962,3 +1008,121 @@ class OracleGraphStore:
         except Exception as e:
             logger.error(f"获取患者信息失败: {str(e)}")
             return {}
+
+    def check_graph_exists(self) -> bool:
+        """检查属性图是否存在"""
+        try:
+            with self.get_connection() as connection:
+                cursor = connection.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM USER_PROPERTY_GRAPHS 
+                    WHERE GRAPH_NAME = 'medical_kg'
+                """)
+                return cursor.fetchone()[0] > 0
+        except Exception as e:
+            logger.error(f"检查属性图状态失败: {str(e)}")
+            return False
+
+    def create_property_graph(self) -> bool:
+        """创建属性图"""
+        try:
+            with self.get_connection() as connection:
+                cursor = connection.cursor()
+                try:
+                    # 如果图已存在，先删除
+                    cursor.execute("DROP PROPERTY GRAPH medical_kg FORCE")
+                    connection.commit()
+                    logger.info("已删除旧的属性图")
+                except Exception as e:
+                    if "ORA-00942" not in str(e):  # 不存在时忽略错误
+                        logger.warning(f"删除旧图时出: {str(e)}")
+                
+                # 创建新的属性图
+                cursor.execute("""
+                CREATE PROPERTY GRAPH medical_kg
+                VERTEX TABLES (
+                    medical_entities
+                    KEY (entity_id)
+                    PROPERTIES (
+                        entity_type,
+                        entity_name,
+                        entity_value,
+                        doc_ref,
+                        created_at
+                    )
+                )
+                EDGE TABLES (
+                    medical_relations
+                    KEY (relation_id)
+                    SOURCE KEY (from_entity_id) REFERENCES medical_entities(entity_id)
+                    DESTINATION KEY (to_entity_id) REFERENCES medical_entities(entity_id)
+                    PROPERTIES (
+                        relation_type,
+                        doc_reference,
+                        created_at
+                    )
+                )
+                """)
+                connection.commit()
+                logger.info("属性图创建成功")
+                return True
+        except Exception as e:
+            logger.error(f"创建属性图失败: {str(e)}")
+            return False
+
+    def execute_pgql(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        执行PGQL查询
+        
+        Args:
+            query (str): PGQL查询语句
+            params (Optional[Dict]): 查询参数
+            
+        Returns:
+            List[Dict[str, Any]]: 查询结果列表
+        """
+        try:
+            with self.get_connection() as connection:
+                cursor = connection.cursor()
+                
+                # 如果有参数，替换查询中的命名参数
+                final_query = query.strip()
+                if params:
+                    for key, value in params.items():
+                        # 将命名参数替换为实际值
+                        if isinstance(value, str):
+                            final_query = final_query.replace(f":{key}", f"'{value}'")
+                        else:
+                            final_query = final_query.replace(f":{key}", str(value))
+                
+                # 准备PGQL查询
+                pgql_query = f"SELECT * FROM PGQL_QUERY('{final_query}', 'MEDICAL_KG', 1, 1000)"
+                
+                # 记录完整的查询语句
+                logger.info(f"执行PGQL查询: {pgql_query}")
+                
+                # 执行查询
+                cursor.execute(pgql_query)
+                
+                # 获取列名
+                columns = [col[0].lower() for col in cursor.description]
+                
+                # 处理结果
+                results = []
+                for row in cursor:
+                    result = {}
+                    for i, value in enumerate(row):
+                        # 处理LOB对象
+                        if isinstance(value, oracledb.LOB):
+                            result[columns[i]] = value.read()
+                        else:
+                            result[columns[i]] = value if value is not None else ''
+                    results.append(result)
+                
+                logger.info(f"PGQL查询返回 {len(results)} 条结果")
+                return results
+                
+        except Exception as e:
+            logger.error(f"执行PGQL查询失败: {str(e)}")
+            raise

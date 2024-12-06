@@ -1,3 +1,9 @@
+"""
+Test Database Connection
+
+This script tests the database connection and Property Graph functionality.
+"""
+
 import oracledb
 import os
 from dotenv import load_dotenv
@@ -37,14 +43,24 @@ def test_connection():
             result = cursor.fetchone()
             logger.info(f"当前数据库时间: {result[0]}")
             
-            # 测试 JSON 表是否存在
+            # 测试图数据表是否存在
             cursor.execute("""
                 SELECT COUNT(*) 
                 FROM user_tables 
-                WHERE table_name = 'DOCUMENT_JSON'
+                WHERE table_name IN ('MEDICAL_ENTITIES', 'MEDICAL_RELATIONS')
             """)
-            table_exists = cursor.fetchone()[0] > 0
-            logger.info(f"DOCUMENT_JSON 表是否存在: {table_exists}")
+            table_count = cursor.fetchone()[0]
+            logger.info(f"找到 {table_count}/2 个图数据表")
+            
+            if table_count == 2:
+                # 测试图数据
+                cursor.execute("SELECT COUNT(*) FROM medical_entities")
+                entity_count = cursor.fetchone()[0]
+                logger.info(f"实体数量: {entity_count}")
+                
+                cursor.execute("SELECT COUNT(*) FROM medical_relations")
+                relation_count = cursor.fetchone()[0]
+                logger.info(f"关系数量: {relation_count}")
             
         connection.close()
         logger.info("数据库连接测试完成")
