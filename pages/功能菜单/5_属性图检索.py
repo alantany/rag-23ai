@@ -35,7 +35,7 @@ def analyze_symptoms_with_openai(prompt):
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是一个专业的医学顾问，擅长分析患者症状的相似���。请从医学专业的角度分析症状的相关性和可能的病因。"},
+                {"role": "system", "content": "你是一个专业的医学顾问，擅长分析患者症状的相似性。请从医学专业的角度分析症状的相关性和可能的病因。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7
@@ -72,7 +72,7 @@ def render_property_graph_demo():
         similarity_threshold = st.slider("相似度阈值", 0.0, 1.0, 0.5)
         if st.button("分析"):
             # 获取所有患者的症状数据
-            query = """SELECT DISTINCT v.entity_name as patient_name, e.relation_type as relation_type, v2.entity_value as entity_value, JSON_VALUE(v2.entity_value, '$.症状') as symptom_path1, JSON_VALUE(v2.entity_value, '$.主诉') as symptom_path2 FROM MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' AND e.relation_type IN ('现病史', '主诉')"""
+            query = """SELECT DISTINCT v.entity_name as patient_name, e.relation_type as relation_type, v2.entity_value as entity_value, JSON_VALUE(v2.entity_value, '$.症状') as symptom_path1, JSON_VALUE(v2.entity_value, '$.主诉') as symptom_path2 FROM G MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' AND e.relation_type IN ('现病史', '主诉')"""
             
             results = query_executor.execute_graph_query(query)
             if results:
@@ -116,7 +116,7 @@ def render_property_graph_demo():
                     st.write("### 症状相似度分析结果")
                     st.write(analysis)
             else:
-                st.warning("未找到任何症状记录")
+                st.warning("未找到��何症状记录")
     
     elif query_type == "患者数据统计":
         if st.button("统计"):
@@ -129,7 +129,7 @@ def render_property_graph_demo():
                 abnormal_labs[patient] = len(results) if results else 0
                 
             # 获取症状和诊断统计
-            query = """SELECT DISTINCT v.entity_name as patient, COUNT(DISTINCT CASE WHEN e.relation_type = '现病史' THEN v2.entity_id END) as symptom_count, COUNT(DISTINCT CASE WHEN e.relation_type = '入院诊断' THEN v2.entity_id END) as diagnosis_count FROM MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' GROUP BY v.entity_name"""
+            query = """SELECT DISTINCT v.entity_name as patient, COUNT(DISTINCT CASE WHEN e.relation_type = '现病史' THEN v2.entity_id END) as symptom_count, COUNT(DISTINCT CASE WHEN e.relation_type = '入院诊断' THEN v2.entity_id END) as diagnosis_count FROM G MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' GROUP BY v.entity_name"""
             
             results = query_executor.execute_graph_query(query)
             if results:
@@ -160,7 +160,7 @@ def render_property_graph_demo():
     elif query_type == "患者诊疗经过查询":
         patient_name = st.text_input("请输入患者姓名", "周某某")
         if st.button("查询"):
-            query = """SELECT DISTINCT v.entity_name as patient, e.relation_type as relation_type, JSON_VALUE(v2.entity_value, '$.内容') as content FROM MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' AND v.entity_name = :patient_name AND e.relation_type = '诊疗经过'"""
+            query = """SELECT DISTINCT v.entity_name as patient, e.relation_type as relation_type, JSON_VALUE(v2.entity_value, '$.内容') as content FROM G MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' AND v.entity_name = :patient_name AND e.relation_type = '诊疗经过'"""
             
             results = query_executor.execute_graph_query(query, {'patient_name': patient_name})
             if results:
@@ -173,7 +173,7 @@ def render_property_graph_demo():
     
     elif query_type == "关系类型统计":
         if st.button("统计"):
-            query = """SELECT DISTINCT e.relation_type as relation_type, COUNT(*) as count FROM MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' GROUP BY e.relation_type ORDER BY count DESC"""
+            query = """SELECT DISTINCT e.relation_type as relation_type, COUNT(*) as count FROM G MATCH (v) -[e]-> (v2) WHERE v.entity_type = '患者' GROUP BY e.relation_type ORDER BY count DESC"""
             
             results = query_executor.execute_graph_query(query)
             if results:
@@ -187,7 +187,7 @@ def render_property_graph_demo():
     elif query_type == "患者基本信息查询":
         patient_name = st.text_input("请输入患者姓名", "周某某")
         if st.button("查询"):
-            query = """SELECT DISTINCT v.entity_name as patient, JSON_VALUE(v.entity_value, '$.患者.基本信息.性别') as gender, JSON_VALUE(v.entity_value, '$.患者.基本信息.年龄') as age, JSON_VALUE(v.entity_value, '$.患者.基本信息.入院日期') as admission_date, JSON_VALUE(v.entity_value, '$.患者.���本信息.出院日期') as discharge_date FROM MATCH (v) WHERE v.entity_type = '患者' AND v.entity_name = :patient_name"""
+            query = """SELECT DISTINCT v.entity_name as patient, JSON_VALUE(v.entity_value, '$.患者.基本信息.性别') as gender, JSON_VALUE(v.entity_value, '$.患者.基本信息.年龄') as age, JSON_VALUE(v.entity_value, '$.患者.基本信息.入院日期') as admission_date, JSON_VALUE(v.entity_value, '$.患者.基本信息.出院日期') as discharge_date FROM G MATCH (v) WHERE v.entity_type = '患者' AND v.entity_name = :patient_name"""
             
             results = query_executor.execute_graph_query(query, {'patient_name': patient_name})
             if results:

@@ -339,7 +339,7 @@ class OracleGraphStore:
                 return results
                 
         except Exception as e:
-            logger.error(f"搜���实体失败: {str(e)}")
+            logger.error(f"搜索实体失败: {str(e)}")
             raise
 
     def search_relationships(self, relationship_type: Optional[str] = None,
@@ -401,7 +401,7 @@ class OracleGraphStore:
                 logger.info(f"执行关系查询SQL: {sql}")
                 logger.info(f"参数: {params}")
                 
-                # 执行查询
+                # 执��查询
                 cursor.execute(sql, params)
                 
                 # 获取并记录原始数据
@@ -674,7 +674,7 @@ class OracleGraphStore:
                     }
                 
                 return {
-                    "基���信息": patient_info.get("基本信息", {}),
+                    "���本信息": patient_info.get("基本信息", {}),
                     "住信息": hospital_info,
                     "主诊断": diagnoses
                 }
@@ -702,7 +702,7 @@ class OracleGraphStore:
                     VALUES ('患者', :name, :value, :doc_ref, :created_at)
                     RETURNING ENTITY_ID INTO :id
                 """, {
-                    'name': patient_name,  # 直接使���患者姓名，不设置默认值
+                    'name': patient_name,  # 直接使用患者姓名，不设置默认值
                     'value': json.dumps(data, ensure_ascii=False),
                     'doc_ref': str(doc_reference),
                     'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -912,7 +912,7 @@ class OracleGraphStore:
                     })
                 
                 # 储出院医嘱
-                for advice in data.get("出���医嘱", []):
+                for advice in data.get("出院医嘱", []):
                     id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
@@ -1086,6 +1086,9 @@ class OracleGraphStore:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 
+                # 启用PGQL
+                cursor.execute("ALTER SESSION SET GRAPH_QUERY_LANGUAGE = PGQL")
+                
                 # 处理查询字符串，移除多余的换行和空格
                 final_query = ' '.join(query.strip().split())
                 
@@ -1099,7 +1102,12 @@ class OracleGraphStore:
                             final_query = final_query.replace(f":{key}", str(value))
                 
                 # 准备PGQL查询，确保所有引号都正确转义
-                pgql_query = f"SELECT * FROM PGQL_QUERY('{final_query.replace(chr(39), chr(39)+chr(39))}', 'MEDICAL_KG', 1, 1000)"
+                pgql_query = f"""
+                WITH G AS (
+                    SELECT * FROM GRAPH_TABLE(MEDICAL_KG)
+                )
+                {final_query.replace(chr(39), chr(39)+chr(39))}
+                """
                 
                 # 记录完整的查询语句
                 logger.info(f"执行PGQL查询: {pgql_query}")
