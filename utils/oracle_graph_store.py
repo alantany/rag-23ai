@@ -467,7 +467,7 @@ class OracleGraphStore:
                         
                         # 解析患者信息
                         patient_info = json.loads(entity_value)
-                        logger.info(f"解析的���者信息: {patient_info}")
+                        logger.info(f"解析的患者信息: {patient_info}")
                         
                         # 构建患者数据
                         patient_data = {
@@ -576,7 +576,7 @@ class OracleGraphStore:
                     }
                     results.append(relation)
                 
-                logger.info(f"处理���的关系数据: {json.dumps(results, ensure_ascii=False)}")
+                logger.info(f"处理后的关系数据: {json.dumps(results, ensure_ascii=False)}")
                 return results
                 
         except Exception as e:
@@ -674,7 +674,7 @@ class OracleGraphStore:
                     }
                 
                 return {
-                    "��信息": patient_info.get("基本信息", {}),
+                    "信息": patient_info.get("基本信息", {}),
                     "住信息": hospital_info,
                     "主诊断": diagnoses
                 }
@@ -884,7 +884,7 @@ class OracleGraphStore:
                         })
                 
                 # 存储诊疗经过
-                if data.get("诊疗经过"):
+                if data.get("诊疗经���"):
                     id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
@@ -1089,7 +1089,7 @@ class OracleGraphStore:
                 # 处理查询字符串，移除多余的换行和空格
                 final_query = ' '.join(query.strip().split())
                 
-                # 如果有参数，替换查询中的命名参数
+                # 如果有参数，替换查询中���命名参数
                 if params:
                     for key, value in params.items():
                         # 将命名参数替换为实际值
@@ -1102,7 +1102,7 @@ class OracleGraphStore:
                 pgql_query = f"""
                 SELECT *
                 FROM GRAPH_TABLE(MEDICAL_KG,
-                    'MATCH {final_query.replace(chr(39), chr(39)+chr(39))}'
+                    '{final_query.replace(chr(39), chr(39)+chr(39))}'
                 )
                 """
                 
