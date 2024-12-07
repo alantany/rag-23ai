@@ -339,7 +339,7 @@ class OracleGraphStore:
                 return results
                 
         except Exception as e:
-            logger.error(f"搜索实体失败: {str(e)}")
+            logger.error(f"搜���实体失败: {str(e)}")
             raise
 
     def search_relationships(self, relationship_type: Optional[str] = None,
@@ -467,7 +467,7 @@ class OracleGraphStore:
                         
                         # 解析患者信息
                         patient_info = json.loads(entity_value)
-                        logger.info(f"解��的患者信息: {patient_info}")
+                        logger.info(f"解析的患者信息: {patient_info}")
                         
                         # 构建患者数据
                         patient_data = {
@@ -674,7 +674,7 @@ class OracleGraphStore:
                     }
                 
                 return {
-                    "基本信息": patient_info.get("基本信息", {}),
+                    "基���信息": patient_info.get("基本信息", {}),
                     "住信息": hospital_info,
                     "主诊断": diagnoses
                 }
@@ -702,7 +702,7 @@ class OracleGraphStore:
                     VALUES ('患者', :name, :value, :doc_ref, :created_at)
                     RETURNING ENTITY_ID INTO :id
                 """, {
-                    'name': patient_name,  # 直接使用患者姓名，不设置默认值
+                    'name': patient_name,  # 直接使���患者姓名，不设置默认值
                     'value': json.dumps(data, ensure_ascii=False),
                     'doc_ref': str(doc_reference),
                     'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -912,7 +912,7 @@ class OracleGraphStore:
                     })
                 
                 # 储出院医嘱
-                for advice in data.get("出院医嘱", []):
+                for advice in data.get("出���医嘱", []):
                     id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
@@ -943,7 +943,7 @@ class OracleGraphStore:
                 logger.info(f"成功存储文档 {doc_reference} 的数据")
                 
         except Exception as e:
-            logger.error(f"存储医疗数据��败: {str(e)}")
+            logger.error(f"存储医疗数据失败: {str(e)}")
             raise
 
     def get_patient_info(self, patient_name: str) -> Dict[str, Any]:
@@ -1086,8 +1086,10 @@ class OracleGraphStore:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 
+                # 处理查询字符串，移除多余的换行和空格
+                final_query = ' '.join(query.strip().split())
+                
                 # 如果有参数，替换查询中的命名参数
-                final_query = query.strip()
                 if params:
                     for key, value in params.items():
                         # 将命名参数替换为实际值
@@ -1096,8 +1098,8 @@ class OracleGraphStore:
                         else:
                             final_query = final_query.replace(f":{key}", str(value))
                 
-                # 准备PGQL查询
-                pgql_query = f"SELECT * FROM PGQL_QUERY('{final_query}', 'MEDICAL_KG', 1, 1000)"
+                # 准备PGQL查询，确保所有引号都正确转义
+                pgql_query = f"SELECT * FROM PGQL_QUERY('{final_query.replace(chr(39), chr(39)+chr(39))}', 'MEDICAL_KG', 1, 1000)"
                 
                 # 记录完整的查询语句
                 logger.info(f"执行PGQL查询: {pgql_query}")

@@ -48,13 +48,7 @@ class OraclePropertyGraph:
         
     def get_patient_abnormal_labs(self, patient_name: str) -> List[Dict[str, Any]]:
         """获取患者的异常生化指标"""
-        query = """
-        SELECT DISTINCT v.entity_name as patient, e.indicator_name as indicator, e.value as value, e.unit as unit, e.reference_range as reference
-        FROM MATCH (v) -[e:HAS_INDICATOR]-> (i)
-        WHERE v.entity_type = '患者'
-        AND v.entity_name = :patient_name
-        AND e.reference_range = '异常'
-        """
+        query = """SELECT DISTINCT v.entity_name as patient, e.indicator_name as indicator, e.value as value, e.unit as unit, e.reference_range as reference FROM MATCH (v) -[e:HAS_INDICATOR]-> (i) WHERE v.entity_type = '患者' AND v.entity_name = :patient_name AND e.reference_range = '异常'"""
         return self.graph_store.execute_pgql(query, {'patient_name': patient_name})
 
     def find_similar_patients(self, symptom: str) -> List[Dict[str, Any]]:
