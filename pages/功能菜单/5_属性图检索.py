@@ -38,7 +38,7 @@ def analyze_symptoms_with_openai(symptoms_data):
 患者症状信息：
 {symptoms_data}
 
-请从以下几个方面进行分析：
+请从以下几个方面进行��析：
 1. 症状的相似度和关联性
 2. 可能的共同病因
 3. 需要注意的医学问题
@@ -49,7 +49,7 @@ def analyze_symptoms_with_openai(symptoms_data):
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是一个专业的医学顾问，擅长分析患者症状的相似度。请从��学专业的角度分析症状的相关性和可能的病因。"},
+                {"role": "system", "content": "你是一个专业的医学顾问，擅长分析患者症状的相似度。请从医学专业的角度分析症状的相关性和可能的病因。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7
@@ -87,15 +87,20 @@ def render_property_graph_demo():
     elif query_type == "患者诊疗经过查询":
         patient_name = st.text_input("请输入患者姓名", "周某某")
         if st.button("查询"):
-            query = """MATCH (v) -[e]-> (v2)
-            WHERE v.ENTITY_TYPE = '患者'
-            AND v.ENTITY_NAME = :patient_name
-            AND e.RELATION_TYPE = '诊疗经过'
-            COLUMNS (
-                v.ENTITY_NAME AS patient,
-                e.RELATION_TYPE AS relation_type,
-                JSON_VALUE(v2.ENTITY_VALUE, '$.内容') AS content
-            )"""
+            query = """
+            SELECT *
+            FROM GRAPH_TABLE ( MEDICAL_KG
+                MATCH (v) -[e]-> (v2)
+                WHERE v.ENTITY_TYPE = '患者'
+                AND v.ENTITY_NAME = :patient_name
+                AND e.RELATION_TYPE = '诊疗经过'
+                COLUMNS (
+                    v.ENTITY_NAME AS patient,
+                    e.RELATION_TYPE AS relation_type,
+                    JSON_VALUE(v2.ENTITY_VALUE, '$.内容') AS content
+                )
+            )
+            """
             
             results = query_executor.execute_graph_query(query, {'patient_name': patient_name})
             if results:
@@ -107,7 +112,8 @@ def render_property_graph_demo():
                 st.warning("未找到任何诊疗记录")
                 
     elif query_type == "症状相似度分析":
-        if st.button("分析所有患者症状"):
+        patient_name = st.text_input("请输入患者姓名", "马某某")
+        if st.button("分析"):
             with st.spinner("正在获取症状数据..."):
                 # 获取所有患者的症状
                 results = graph.find_similar_patients("")
@@ -119,15 +125,26 @@ def render_property_graph_demo():
                 # 按患者组织症状数据
                 patient_symptoms = defaultdict(list)
                 for row in results:
-                    patient_symptoms[row['patient_name']].append(row['symptom'])
+                    try:
+                        symptom_detail = json.loads(row['symptom_detail'])
+                        symptom = symptom_detail.get('症状', '')
+                        if symptom:
+                            patient_symptoms[row['patient_name']].append(symptom)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
                 
                 # 构建用于分析的文本
                 analysis_text = []
-                for patient, symptoms in patient_symptoms.items():
-                    analysis_text.append(f"{patient}的症状：")
-                    for symptom in symptoms:
+                analysis_text.append(f"目标患者 {patient_name} 的症状：")
+                if patient_name in patient_symptoms:
+                    for symptom in patient_symptoms[patient_name]:
                         analysis_text.append(f"- {symptom}")
-                    analysis_text.append("")  # 添加空行分隔
+                analysis_text.append("\n其他患者的症状：")
+                for p_name, symptoms in patient_symptoms.items():
+                    if p_name != patient_name:
+                        analysis_text.append(f"\n{p_name} 的症状：")
+                        for symptom in symptoms:
+                            analysis_text.append(f"- {symptom}")
                 
                 # 调用OpenAI进行分析
                 with st.spinner("正在分析症状相似度..."):

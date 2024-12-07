@@ -32,7 +32,7 @@ class OraclePropertyGraph:
         query = """MATCH (v) -[e]-> (d)
         WHERE v.ENTITY_TYPE = '患者'
         AND v.ENTITY_NAME = :patient_name
-        AND e.RELATION_TYPE = '入���诊断'
+        AND e.RELATION_TYPE = '入院诊断'
         COLUMNS (
             v.ENTITY_NAME AS patient,
             JSON_VALUE(d.ENTITY_VALUE, '$.诊断') AS diagnosis
@@ -118,28 +118,36 @@ class OraclePropertyGraph:
 
     def find_similar_patients(self, patient_name: str) -> List[Dict[str, Any]]:
         """查找所有患者的症状信息"""
-        query = """SELECT *
-FROM GRAPH_TABLE ( MEDICAL_KG
-    MATCH (v) -[e]-> (s)
-    WHERE v.ENTITY_TYPE = '患者'
-    AND e.RELATION_TYPE = '现病史'
-    COLUMNS (
-        v.ENTITY_NAME AS patient_name,
-        JSON_VALUE(s.ENTITY_VALUE, '$.症状') AS symptom
-    )
-)"""
+        query = """
+        SELECT *
+        FROM GRAPH_TABLE ( MEDICAL_KG
+            MATCH (v) -[e]-> (s)
+            WHERE v.ENTITY_TYPE = '患者'
+            AND e.RELATION_TYPE = '现病史'
+            COLUMNS (
+                v.ENTITY_NAME AS patient_name,
+                JSON_VALUE(s.ENTITY_VALUE, '$.症状') AS symptom,
+                s.ENTITY_VALUE AS symptom_detail
+            )
+        )
+        """
         return self.graph_store.execute_pgql(query)
         
     def find_diagnosis_by_symptom(self, symptom: str) -> List[Dict[str, Any]]:
         """查找与特定症状相关的诊断"""
-        query = """MATCH (v) -[e1]-> (s), (v) -[e2]-> (d)
-        WHERE v.ENTITY_TYPE = '患者'
-        AND e1.RELATION_TYPE = '现病史'
-        AND e2.RELATION_TYPE = '入院诊断'
-        AND JSON_VALUE(s.ENTITY_VALUE, '$.症状') = :symptom
-        COLUMNS (
-            v.ENTITY_NAME AS patient,
-            JSON_VALUE(s.ENTITY_VALUE, '$.症状') AS symptom,
-            JSON_VALUE(d.ENTITY_VALUE, '$.诊断') AS diagnosis
-        )"""
+        query = """
+        SELECT *
+        FROM GRAPH_TABLE ( MEDICAL_KG
+            MATCH (v) -[e1]-> (s), (v) -[e2]-> (d)
+            WHERE v.ENTITY_TYPE = '患者'
+            AND e1.RELATION_TYPE = '现病史'
+            AND e2.RELATION_TYPE = '入院诊断'
+            AND JSON_VALUE(s.ENTITY_VALUE, '$.症状') = :symptom
+            COLUMNS (
+                v.ENTITY_NAME AS patient,
+                JSON_VALUE(s.ENTITY_VALUE, '$.症状') AS symptom,
+                JSON_VALUE(d.ENTITY_VALUE, '$.诊断') AS diagnosis
+            )
+        )
+        """
         return self.graph_store.execute_pgql(query, {'symptom': symptom})
