@@ -18,7 +18,13 @@ class OraclePropertyGraph:
             
     def get_patient_symptoms(self, patient_name: str) -> List[Dict[str, Any]]:
         """获取患者的所有症状"""
-        query = """(v) -[e:HAS_SYMPTOM]-> (s) WHERE v.entity_type = '患者' AND v.entity_name = :patient_name SELECT DISTINCT v.entity_name as patient, e.symptom_name as symptom, e.onset_time as time"""
+        query = """MATCH (v1) -[e1]-> (s1)
+        WHERE v1.ENTITY_TYPE = '患者' 
+        AND e1.RELATION_TYPE = '现病史'
+        COLUMNS (
+            v1.ENTITY_NAME AS patient_name,
+            JSON_VALUE(s1.ENTITY_VALUE, '$.症状') AS symptom
+        )"""
         return self.graph_store.execute_pgql(query, {'patient_name': patient_name})
 
     def get_patient_diagnosis(self, patient_name: str) -> List[Dict[str, Any]]:

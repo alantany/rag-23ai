@@ -102,7 +102,7 @@ INDEXTYPE IS CTXSYS.CONTEXT;
 ```json
 {
     "患者姓名": "张某某",
-    "性别": "男",
+    "���别": "男",
     "年龄": 45,
     "入院日期": "2024-01-01",
     "出院日期": "2024-01-10",
@@ -298,89 +298,101 @@ WHERE p.entity_type = '患者'
   AND rs.relation_type = 'HAS_SYMPTOM';
 ```
 
-### 4. Property Graph检索
+### 4. 属性图检索
 
-基于Oracle Property Graph技术实现的图模式检索:
+基于Oracle Property Graph进行图模式检索:
 
 #### 技术方案
 - 使用Oracle Property Graph存储实体和关系
-- 支持PGQL(Property Graph Query Language)查询
-- 适合复杂的图模式匹配和路径查询
-- 与传统图数据库检索互补，提供更强大的图分析能力
+- 通过PGQL语言进行图模式查询
+- 支持复杂的图遍历和模式匹配
 
-#### 数据模型
-Property Graph创建:
-```sql
-CREATE PROPERTY GRAPH medical_kg VERTEX TABLES (
-    medical_entities KEY (entity_id) LABEL entity PROPERTIES ALL COLUMNS
-) EDGE TABLES (
-    medical_relations KEY (relation_id)
-        SOURCE KEY (from_entity_id) REFERENCES medical_entities (entity_id)
-        DESTINATION KEY (to_entity_id) REFERENCES medical_entities (entity_id)
-        LABEL relation PROPERTIES ALL COLUMNS
-);
-```
+#### PGQL查询语法
 
-#### 查询示例
-1. 基本的图模式查询:
-```sql
-SELECT * FROM GRAPH_TABLE (medical_kg
-    MATCH
-    (v IS entity) -[e IS relation]-> (v2 IS entity)
+在Oracle数据库中使用属性图功能时，需要遵循以下语法规则：
+
+##### 基本查询结构
+sql
+SELECT *
+FROM GRAPH_TABLE ( graph_name
+    MATCH pattern
+    WHERE conditions
     COLUMNS (
-        v.entity_name AS source_name,
-        v.entity_type AS source_type,
-        e.relation_type AS relation,
-        v2.entity_name AS target_name
-    )
-);
-```
-
-2. 查询特定患者的所有关系:
-```sql
-SELECT * FROM GRAPH_TABLE (medical_kg
-    MATCH
-    (v IS entity WHERE v.entity_name = '马某某') -[e IS relation]-> (v2 IS entity)
-    COLUMNS (
-        e.relation_type AS record_type,
-        v2.entity_type AS info_type,
-        v2.entity_value AS detail
-    )
-);
-```
-
-3. 按关系类型统计:
-```sql
-SELECT relation_type, COUNT(*) as count
-FROM GRAPH_TABLE (medical_kg
-    MATCH
-    (v IS entity) -[e IS relation]-> (v2 IS entity)
-    COLUMNS (
-        e.relation_type AS relation_type
+        alias.property AS column_name,
+        ...
     )
 )
-GROUP BY relation_type
-ORDER BY count DESC;
 ```
 
-#### 与其他检索方式的对比
+##### 关键要点
+1. 查询结构：
+   - 最外层是标准的 SQL `SELECT * FROM GRAPH_TABLE()`
+   - 图名称直接跟在 `GRAPH_TABLE` 后面
+   - PGQL 查询作为 `GRAPH_TABLE` 函数的参数
 
-1. 向量检索
-- 优势：语义相似度匹配，适合自然语言查询
-- 场景：模糊查询，相似内容查找
+2. PGQL 语法：
+   - `MATCH` 子句定义图模式
+   - 使用 `(v)` 表示顶点，`[e]` 表示边
+   - 使用 `-[e]->` 表示有向边
+   - 属性名称必须大写（如 `ENTITY_TYPE`, `ENTITY_NAME`）
 
-2. JSON结构化检索
-- 优势：精确字段匹配，支持复杂条件组合
-- 场景：精确查询，多条件筛选
+3. 列定义：
+   - 使用 `COLUMNS` 子句而不是 `SELECT`
+   - 在 `COLUMNS` 中定义输出列的别名
+   - 可以使用 JSON 函数处理属性值
 
-3. 关系型图检索
-- 优势：基础的实体关系查询，支持SQL标准
-- 场景：简单的关系查询，与现有系统集成
+##### 示例
+1. 基本节点查询：
+```sql
+SELECT *
+FROM GRAPH_TABLE ( MEDICAL_KG
+    MATCH (a)
+    WHERE a.ENTITY_TYPE = '患者'
+    COLUMNS (
+        a.ENTITY_NAME
+    )
+)
+```
 
-4. Property Graph检索
-- 优势：复杂图模式匹配，路径查询，图算法支持
-- 场景：复杂关系分析，知识推理，图模式匹配
+2. 关系查询：
+```sql
+SELECT *
+FROM GRAPH_TABLE ( MEDICAL_KG
+    MATCH (v1) -[e1]-> (s1)
+    WHERE v1.ENTITY_TYPE = '患者' 
+    AND e1.RELATION_TYPE = '现病史'
+    COLUMNS (
+        v1.ENTITY_NAME AS patient_name,
+        JSON_VALUE(s1.ENTITY_VALUE, '$.症状') AS symptom
+    )
+)
+```
 
+3. 复杂模式查询：
+```sql
+SELECT *
+FROM GRAPH_TABLE ( MEDICAL_KG
+    MATCH (v1) -[e1]-> (s1), (v2) -[e2]-> (s2)
+    WHERE v1.ENTITY_TYPE = '患者'
+    AND v2.ENTITY_TYPE = '患者'
+    AND v1.ENTITY_NAME != v2.ENTITY_NAME
+    AND e1.RELATION_TYPE = '现病史'
+    AND e2.RELATION_TYPE = '现病史'
+    COLUMNS (
+        v1.ENTITY_NAME AS patient1,
+        v2.ENTITY_NAME AS patient2,
+        JSON_VALUE(s1.ENTITY_VALUE, '$.症状') AS symptom1,
+        JSON_VALUE(s2.ENTITY_VALUE, '$.症状') AS symptom2
+    )
+)
+```
+
+##### 注意事项
+1. CLOB 类型的属性（如 ENTITY_VALUE）不能直接比较，需要使用 JSON 函数
+2. 属性名称区分大小写，通常使用大写
+3. 图名称在 `GRAPH_TABLE` 函数中直接使用，不需要引号
+4. 字符串值需要使用单引号
+```
 ## 多模态检索策略
 
 系统根据查询特点自动选择或组合最适合的检索方式：
