@@ -401,7 +401,7 @@ class OracleGraphStore:
                 logger.info(f"执行关系查询SQL: {sql}")
                 logger.info(f"参数: {params}")
                 
-                # 执��查询
+                # 执行查询
                 cursor.execute(sql, params)
                 
                 # 获取并记录原始数据
@@ -674,7 +674,7 @@ class OracleGraphStore:
                     }
                 
                 return {
-                    "���本信息": patient_info.get("基本信息", {}),
+                    "本信息": patient_info.get("基本信息", {}),
                     "住信息": hospital_info,
                     "主诊断": diagnoses
                 }
@@ -1086,9 +1086,6 @@ class OracleGraphStore:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 
-                # 启用PGQL
-                cursor.execute("ALTER SESSION SET GRAPH_QUERY_LANGUAGE = PGQL")
-                
                 # 处理查询字符串，移除多余的换行和空格
                 final_query = ' '.join(query.strip().split())
                 
@@ -1101,12 +1098,12 @@ class OracleGraphStore:
                         else:
                             final_query = final_query.replace(f":{key}", str(value))
                 
-                # 准备PGQL查询，确保所有引号都正确转义
+                # 准备PGQL查询
                 pgql_query = f"""
-                WITH G AS (
-                    SELECT * FROM GRAPH_TABLE(MEDICAL_KG)
+                SELECT *
+                FROM GRAPH_TABLE(MEDICAL_KG,
+                    '{final_query.replace(chr(39), chr(39)+chr(39))}'
                 )
-                {final_query.replace(chr(39), chr(39)+chr(39))}
                 """
                 
                 # 记录完整的查询语句
