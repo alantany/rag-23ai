@@ -467,7 +467,7 @@ class OracleGraphStore:
                         
                         # 解析患者信息
                         patient_info = json.loads(entity_value)
-                        logger.info(f"解析的患者信息: {patient_info}")
+                        logger.info(f"解析的���者信息: {patient_info}")
                         
                         # 构建患者数据
                         patient_data = {
@@ -576,7 +576,7 @@ class OracleGraphStore:
                     }
                     results.append(relation)
                 
-                logger.info(f"处理后的关系数据: {json.dumps(results, ensure_ascii=False)}")
+                logger.info(f"处理���的关系数据: {json.dumps(results, ensure_ascii=False)}")
                 return results
                 
         except Exception as e:
@@ -674,7 +674,7 @@ class OracleGraphStore:
                     }
                 
                 return {
-                    "本信息": patient_info.get("基本信息", {}),
+                    "��信息": patient_info.get("基本信息", {}),
                     "住信息": hospital_info,
                     "主诊断": diagnoses
                 }
@@ -1102,7 +1102,7 @@ class OracleGraphStore:
                 pgql_query = f"""
                 SELECT *
                 FROM GRAPH_TABLE(MEDICAL_KG,
-                    '{final_query.replace(chr(39), chr(39)+chr(39))}'
+                    'MATCH {final_query.replace(chr(39), chr(39)+chr(39))}'
                 )
                 """
                 
