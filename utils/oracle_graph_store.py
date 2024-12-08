@@ -401,7 +401,7 @@ class OracleGraphStore:
                 logger.info(f"执行关系查询SQL: {sql}")
                 logger.info(f"参数: {params}")
                 
-                # 执行查询
+                # 行查询
                 cursor.execute(sql, params)
                 
                 # 获取并记录原始数据
@@ -765,7 +765,7 @@ class OracleGraphStore:
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                 
-                # 存储入院诊断
+                # 存���入院诊断
                 for diagnosis in data.get("入院诊断", []):
                     id_var = cursor.var(int)
                     cursor.execute("""
@@ -821,7 +821,7 @@ class OracleGraphStore:
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                 
-                # 存储生体征
+                # 存储生命体征
                 vital_signs = data.get("生命体征", {})
                 if isinstance(vital_signs, dict):
                     for key, value in vital_signs.items():
@@ -852,7 +852,7 @@ class OracleGraphStore:
                             'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         })
                 
-                # 储生化指标
+                # 存储生化指标
                 biochemical_indicators = data.get("生化指标", {})
                 if isinstance(biochemical_indicators, dict):
                     for key, value in biochemical_indicators.items():
@@ -884,7 +884,7 @@ class OracleGraphStore:
                         })
                 
                 # 存储诊疗经过
-                if data.get("诊疗经���"):
+                if data.get("诊疗经过"):
                     id_var = cursor.var(int)
                     cursor.execute("""
                         INSERT INTO MEDICAL_ENTITIES 
@@ -911,7 +911,7 @@ class OracleGraphStore:
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                 
-                # 储出院医嘱
+                # 存储出院医嘱
                 for advice in data.get("出院医嘱", []):
                     id_var = cursor.var(int)
                     cursor.execute("""
@@ -985,7 +985,7 @@ class OracleGraphStore:
                     patient_info = json.loads(entity_value)
                     logger.info(f"解析的患者信息: {patient_info}")
                     
-                    # 返回完整的患者信息
+                    # 返回完整患者信息
                     return {
                         "姓名": row[0],
                         "文档": row[1],
@@ -1030,7 +1030,7 @@ class OracleGraphStore:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 try:
-                    # 如果图已存在，先删除
+                    # 如果图存在，先删除
                     cursor.execute("DROP PROPERTY GRAPH medical_kg FORCE")
                     connection.commit()
                     logger.info("已删除旧的属性图")
@@ -1086,34 +1086,32 @@ class OracleGraphStore:
             with self.get_connection() as connection:
                 cursor = connection.cursor()
                 
-                # 处理查询字符串，移除多余的换行和空格
-                final_query = ' '.join(query.strip().split())
-                
-                # 如果有参数，替换查询中���命名参数
+                # 记录查询语句
+                logger.info(f"原始PGQL查询: {query}")
                 if params:
-                    for key, value in params.items():
-                        # 将命名参数替换为实际值
-                        if isinstance(value, str):
-                            final_query = final_query.replace(f":{key}", f"'{value}'")
-                        else:
-                            final_query = final_query.replace(f":{key}", str(value))
+                    logger.info(f"参数: {params}")
                 
-                # 准备PGQL查询
-                pgql_query = f"""
-                SELECT *
-                FROM GRAPH_TABLE(MEDICAL_KG,
-                    '{final_query.replace(chr(39), chr(39)+chr(39))}'
-                )
+                # 启用PGQL
+                cursor.execute("ALTER SESSION SET GRAPH_QUERY_LANGUAGE = PGQL")
+                logger.info("已启用PGQL")
+                
+                # 设置图名称
+                cursor.execute("ALTER SESSION SET GRAPH_NAME = medical_kg")
+                logger.info("已设置图名称为 medical_kg")
+                
+                # 构建完整的PGQL查询
+                full_query = f"""
+                SELECT * FROM MATCH {query}
                 """
+                logger.info(f"完整PGQL查询: {full_query}")
                 
-                # 记录完整的查询语句
-                logger.info(f"执行PGQL查询: {pgql_query}")
-                
-                # 执行查询
-                cursor.execute(pgql_query)
+                # 执行PGQL查询
+                cursor.execute(full_query, params or {})
+                logger.info("已执行PGQL查询")
                 
                 # 获取列名
                 columns = [col[0].lower() for col in cursor.description]
+                logger.info(f"返回的列: {columns}")
                 
                 # 处理结果
                 results = []
@@ -1126,6 +1124,7 @@ class OracleGraphStore:
                         else:
                             result[columns[i]] = value if value is not None else ''
                     results.append(result)
+                    logger.info(f"处理的行: {result}")
                 
                 logger.info(f"PGQL查询返回 {len(results)} 条结果")
                 return results
