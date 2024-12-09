@@ -10,9 +10,12 @@ from openai import OpenAI
 from collections import defaultdict
 import os
 from dotenv import load_dotenv
+import logging
 
 # 加载环境变量
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 def analyze_symptoms_with_openai(symptoms_data):
     """使用OpenAI API分析症状相似度"""
@@ -39,7 +42,7 @@ def analyze_symptoms_with_openai(symptoms_data):
 
 请从以下几个方面进行分析：
 1. 症状的相似度和关联性
-2. 可能的共同病��
+2. 可能的共同病因
 3. 需要注意的医学问题
 
 请用中文回答，并尽可能专业和详细。
@@ -73,7 +76,9 @@ def render_property_graph_demo():
                 try:
                     graph = OraclePropertyGraph()
                     # 获取所有患者的症状
+                    logger.info("开始调用find_similar_patients")
                     results = graph.find_similar_patients(patient_name)
+                    logger.info("find_similar_patients返回结果: %r", results)
                     
                     if not results:
                         st.warning("未找到任何症状记录")
@@ -97,7 +102,7 @@ def render_property_graph_demo():
                         except (json.JSONDecodeError, TypeError):
                             continue
                     
-                    # 构建用于分析的文本
+                    # 构建用分析的文本
                     analysis_text = []
                     analysis_text.append(f"目标患者 {patient_name} 的症状：")
                     if patient_name in patient_symptoms:
@@ -123,32 +128,49 @@ def render_property_graph_demo():
                             st.write("### 症状分析结果")
                             st.write(analysis_result)
                         else:
-                            st.error("症状分析失��")
+                            st.error("症状分析失败")
                 except Exception as e:
                     st.error(f"分析过程中出现错误：{str(e)}")
+                    raise  # 添加这行以便看到完整的错误堆栈
                     
     elif query_type == "患者生化指标异常关联":
         patient_name = st.selectbox("选择患者", ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"])
         if st.button("分析"):
             with st.spinner("正在分析生化指标异常关联..."):
                 try:
-                    graph = OraclePropertyGraph()
-                    # 获取患者的异常生化指标
-                    results = graph.get_patient_abnormal_labs(patient_name)
-                    
-                    if results:
-                        st.success(f"找到 {len(results)} 个异常生化指标")
-                        for result in results:
-                            try:
-                                indicator = json.loads(result['indicator'])
-                                value = json.loads(result['value'])
-                                st.write(f"### {indicator.get('名称', '')}")
-                                st.write(f"数值: {value.get('数值', '')}")
-                                st.write(f"参考范围: {value.get('参考范围', '')}")
-                            except (json.JSONDecodeError, TypeError):
-                                continue
-                    else:
-                        st.info("未找到异常生化指标记录")
+                    with OracleGraphStore() as graph_store:
+                        # 使用PGQL查询异常生化指标
+                        query = """
+                        SELECT *
+                        FROM GRAPH_TABLE ( MEDICAL_KG
+                            MATCH (v) -[e]-> (i)
+                            WHERE v.ENTITY_TYPE = 'PATIENT'
+                            AND v.ENTITY_NAME = :patient_name
+                            AND e.RELATION_TYPE = 'HAS_INDICATOR'
+                            AND i.REFERENCE_RANGE = '异常'
+                            COLUMNS (
+                                v.ENTITY_NAME AS patient,
+                                i.INDICATOR_NAME AS indicator,
+                                i.VALUE AS value,
+                                i.UNIT AS unit,
+                                i.REFERENCE_RANGE AS reference
+                            )
+                        )
+                        """
+                        results = graph_store.execute_pgql(query, {'patient_name': patient_name})
+                        
+                        if results:
+                            st.success(f"找到 {len(results)} 个异常生化指标")
+                            for result in results:
+                                try:
+                                    st.write(f"### {result['indicator']}")
+                                    st.write(f"数值: {result['value']}")
+                                    st.write(f"单位: {result['unit']}")
+                                    st.write(f"参考范围: {result['reference']}")
+                                except (KeyError, TypeError):
+                                    continue
+                        else:
+                            st.info("未找到异常生化指标记录")
                 except Exception as e:
                     st.error(f"分析失败: {str(e)}")
                     

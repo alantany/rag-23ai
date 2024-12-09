@@ -102,7 +102,7 @@ INDEXTYPE IS CTXSYS.CONTEXT;
 ```json
 {
     "患者姓名": "张某某",
-    "���别": "男",
+    "性别": "男",
     "年龄": 45,
     "入院日期": "2024-01-01",
     "出院日期": "2024-01-10",
@@ -261,7 +261,7 @@ CREATE INDEX relation_doc_ref_idx ON MEDICAL_RELATIONS(DOC_REFERENCE);
    - HAS_VITAL_SIGN(患者-体征)
    - VITAL_SIGN_VALUE(体征-数值)
 
-5. 生化指标关系：
+5. 生化��标关系：
    - HAS_LAB_TEST(患者-检验)
    - LAB_TEST_VALUE(检验-结果)
    - LAB_TEST_REFERENCE(检验-参考值)
@@ -392,7 +392,130 @@ FROM GRAPH_TABLE ( MEDICAL_KG
 2. 属性名称区分大小写，通常使用大写
 3. 图名称在 `GRAPH_TABLE` 函数中直接使用，不需要引号
 4. 字符串值需要使用单引号
-```
+
+##### 常见问题和解决方案
+
+1. ORA-00904: "S1"."ENTITY_VALUE": invalid identifier
+   - 问题原因：在 GRAPH_TABLE 查询中，COLUMNS 子句必须在 WHERE 子句之前定义所有要使用的列
+   - 解决方案：确保在 COLUMNS 子句中声明所有需要的列，包括用于过滤和输出的列
+
+2. ORA-40988: Subquery is not allowed in a GRAPH_TABLE operator
+   - 问题原因：GRAPH_TABLE 操作符中不允许使用子查询
+   - 解决方案：避免在 GRAPH_TABLE 的 WHERE 子句中使用���查询，如果需要参数，直接使用绑定变量
+
+3. ORA-02000: missing MATCH keyword
+   - 问题原因：GRAPH_TABLE 查询语法结构不正确
+   - 解决方案：按照正确的顺序组织查询语句，例如：
+     ```sql
+     SELECT *
+     FROM GRAPH_TABLE ( MEDICAL_KG
+         MATCH (v1) -[e1]-> (s1), (v2) -[e2]-> (s2)
+         COLUMNS (...)
+         WHERE ...
+     )
+     ```
+
+4. PGQL查询语法错误
+   - 问题描述：使用Neo4j的Cypher语法（如 `-[e:HAS_SYMPTOM]->` ）导致查询失败
+   - 解决方案：使用Oracle PGQL正确语法
+   ```sql
+   -- 错误写法
+   SELECT v.entity_name, e.symptom
+   FROM MATCH (v) -[e:HAS_SYMPTOM]-> ()
+   WHERE v.entity_type = 'PATIENT'
+   
+   -- 正确写法
+   SELECT *
+   FROM GRAPH_TABLE ( MEDICAL_KG
+       MATCH (v) -[e]-> (s)
+       WHERE v.ENTITY_TYPE = 'PATIENT'
+       AND e.RELATION_TYPE = 'HAS_SYMPTOM'
+       COLUMNS (
+           v.ENTITY_NAME AS patient_name,
+           s.ENTITY_VALUE AS symptom
+       )
+   )
+   ```
+
+5. 生化指标查询失败
+   - 问题描述：使用图查询方式无法获取患者的异常生化指标
+   - 原因：生化指标存储在患者实体的JSON字段中，而不是独立的图节点
+   - 解决方案：使用JSON_TABLE直接从患者实体提取数据
+   ```sql
+   -- 错误写法
+   SELECT *
+   FROM GRAPH_TABLE ( MEDICAL_KG
+       MATCH (v) -[e]-> (i)
+       WHERE v.ENTITY_TYPE = 'PATIENT'
+       AND e.RELATION_TYPE = 'HAS_INDICATOR'
+       AND i.REFERENCE_RANGE = '异常'
+   )
+   
+   -- 正确写法
+   SELECT v.ENTITY_NAME as patient,
+          i.项目 as indicator,
+          i.结果 as value,
+          i.单位 as unit,
+          i.参考范围 as reference
+   FROM MEDICAL_ENTITIES v,
+        JSON_TABLE(v.ENTITY_VALUE, '$.生化指标[*]'
+            COLUMNS (
+                项目 VARCHAR2(100) PATH '$.项目',
+                结果 VARCHAR2(100) PATH '$.结果',
+                单位 VARCHAR2(100) PATH '$.单位',
+                参考范围 VARCHAR2(100) PATH '$.参考范围'
+            )
+        ) i
+   WHERE v.ENTITY_TYPE = '患者'
+   AND v.ENTITY_NAME = :patient_name
+   AND i.参考范围 = '异常'
+   ```
+
+6. 数据分析最佳实践
+   - 患者相似症状分析：使用JSON_VALUE提取症状信息，结合图查询找到相似患者
+   ```sql
+   SELECT *
+   FROM GRAPH_TABLE ( MEDICAL_KG
+       MATCH (v1) -[e1]-> (s1), (v2) -[e2]-> (s2)
+       WHERE v1.ENTITY_TYPE = '患者'
+       AND v2.ENTITY_TYPE = '患者'
+       AND v1.ENTITY_NAME = :patient_name
+       AND v1.ENTITY_NAME != v2.ENTITY_NAME
+       AND e1.RELATION_TYPE = '现病史'
+       AND e2.RELATION_TYPE = '现病史'
+       COLUMNS (
+           v1.ENTITY_NAME AS patient1,
+           v2.ENTITY_NAME AS patient2,
+           JSON_VALUE(s1.ENTITY_VALUE, '$.症状') AS symptom1,
+           JSON_VALUE(s2.ENTITY_VALUE, '$.症状') AS symptom2
+       )
+   )
+   ```
+   
+   - 生化指标分析：使用JSON_TABLE展开指标数组，结合大模型进行专业分析
+   ```python
+   # 构建分析提示词
+   prompt = """
+   请分析以下患者的异常生化指标，给出专业的医学分析意见。
+   请包含以下方面：
+   1. 异常指标的临床意义
+   2. 可能的病理生理机制
+   3. 需要关注的健康风险
+   4. 建议进一步检查的项目
+   5. 生活方式建议
+   
+   {patient_indicators}
+   
+   请用专业但易懂的语言回答。
+   """
+   ```
+
+7. 注意事项
+   - 查询时注意区分图数据和JSON数据的存储位置
+   - 使用正确的JSON路径访问嵌套数据
+   - 合理使用大模型进行专业分析
+   - 保持代码的可维护性和可扩展性
+
 ## 多模态检索策略
 
 系统根据查询特点自动选择或组合最适合的检索方式：
@@ -439,7 +562,7 @@ python scripts/export_data.py
 
 ### 导入功能
 
-使用 `scripts/import_data.py` 可以导入数据：
+使用 `scripts/import_data.py` 可以��入数据：
 
 ```bash
 python scripts/import_data.py
