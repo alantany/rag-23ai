@@ -29,6 +29,7 @@ import tempfile
 import networkx as nx
 from collections import defaultdict
 import pandas as pd
+import plotly.express as px
 
 # 加载环境变量
 load_dotenv()
@@ -223,7 +224,7 @@ class MedicalRecordParser:
             response = self.client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "你是���疗数据结构化专家，擅长解析病历文本并生成规范的JSON和SQL"},
+                    {"role": "system", "content": "你�����疗数据结构化专家，擅长解析病历文本并生成规范的JSON和SQL"},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
@@ -1202,7 +1203,7 @@ def visualize_patient_graph(patient_info: Dict[str, Any]) -> str:
                 net.add_edge(patient_name, node_id, title='生命体征')
         
         # 添加生化指标���点
-        if '生化��标' in patient_info:
+        if '生化����标' in patient_info:
             for i, item in enumerate(patient_info['生化指标']):
                 node_id = f'biochem_{i}'
                 net.add_node(node_id,
@@ -1901,28 +1902,198 @@ def display_property_graph_search():
                 with st.spinner("正在分析用药关联..."):
                     try:
                         with OracleGraphStore() as graph_store:
-                            # 使用PGQL查询用药关联
+                            # 使用JSON_TABLE从实体表中提取用药信息
                             query = """
+                            WITH MEDICATIONS AS (
+                                SELECT 
+                                    e.ENTITY_NAME as patient_name,
+                                    m.药品 as medication,
+                                    m.用法 as usage,
+                                    m.剂量 as dosage
+                                FROM MEDICAL_ENTITIES e,
+                                     JSON_TABLE(e.ENTITY_VALUE, '$.用药记录[*]'
+                                         COLUMNS (
+                                             药品 VARCHAR2(100) PATH '$.药品',
+                                             用法 VARCHAR2(100) PATH '$.用法',
+                                             剂量 VARCHAR2(100) PATH '$.剂量'
+                                         )
+                                     ) m
+                                WHERE e.ENTITY_TYPE = '患者'
+                            )
                             SELECT DISTINCT 
-                                v1.entity_name AS patient1,
-                                v2.entity_name AS patient2,
-                                e1.relation_type AS medication_type
-                            MATCH (v1) -[e1]-> () <-[e2]- (v2)
-                            WHERE v1.entity_type = 'PATIENT'
-                              AND v2.entity_type = 'PATIENT'
-                              AND v1.entity_name = :patient_name
-                              AND v1.entity_name != v2.entity_name
-                              AND e1.relation_type = '用药记录'
-                              AND e2.relation_type = e1.relation_type
+                                m1.patient_name AS patient1,
+                                m2.patient_name AS patient2,
+                                m1.medication AS medication_name,
+                                m1.usage AS medication_usage,
+                                m1.dosage AS medication_dosage
+                            FROM MEDICATIONS m1
+                            JOIN MEDICATIONS m2 ON m1.medication = m2.medication
+                                AND m1.patient_name = :patient_name
+                                AND m1.patient_name != m2.patient_name
+                            ORDER BY m1.patient_name, m2.patient_name, m1.medication
                             """
-                            results = graph_store.execute_pgql(query, {"patient_name": patient_name})
+                            results = graph_store.execute_sql(query, {"patient_name": patient_name})
+                            
                             if results:
                                 st.success(f"找到 {len(results)} 个用药关联")
+                                
+                                # 创建网络图
+                                net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="black")
+                                
+                                # 设置物理布局选项
+                                net.set_options("""
+                                {
+                                    "nodes": {
+                                        "font": {
+                                            "size": 16,
+                                            "face": "Microsoft YaHei"
+                                        }
+                                    },
+                                    "edges": {
+                                        "color": {
+                                            "color": "#666666",
+                                            "highlight": "#000000"
+                                        },
+                                        "font": {
+                                            "size": 12,
+                                            "face": "Microsoft YaHei"
+                                        }
+                                    },
+                                    "physics": {
+                                        "enabled": true,
+                                        "solver": "forceAtlas2Based",
+                                        "forceAtlas2Based": {
+                                            "gravitationalConstant": -50,
+                                            "centralGravity": 0.01,
+                                            "springLength": 200,
+                                            "springConstant": 0.08,
+                                            "damping": 0.4,
+                                            "avoidOverlap": 0.5
+                                        }
+                                    }
+                                }
+                                """)
+                                
+                                # 添加节点和边
+                                nodes = set()
+                                medication_data = []
+                                
                                 for result in results:
-                                    st.write(f"- {result['patient2']} 也使用了 '{result['medication']}")
+                                    patient1 = result['patient1']
+                                    patient2 = result['patient2']
+                                    medication = result['medication_name']
+                                    usage = result.get('medication_usage', '')
+                                    dosage = result.get('medication_dosage', '')
+                                    
+                                    # 收集用药数据用于分析
+                                    medication_data.append({
+                                        'patient1': patient1,
+                                        'patient2': patient2,
+                                        'medication': medication,
+                                        'usage': usage,
+                                        'dosage': dosage
+                                    })
+                                    
+                                    if patient1 not in nodes:
+                                        net.add_node(patient1, label=patient1, color='#add8e6', size=30)
+                                        nodes.add(patient1)
+                                    if patient2 not in nodes:
+                                        net.add_node(patient2, label=patient2, color='#add8e6', size=30)
+                                        nodes.add(patient2)
+                                        
+                                    edge_label = f"{medication}"
+                                    if usage and dosage:
+                                        edge_title = f"{medication}\n用法：{usage}\n剂量：{dosage}"
+                                    else:
+                                        edge_title = medication
+                                        
+                                    net.add_edge(patient1, patient2, 
+                                               title=edge_title,
+                                               label=edge_label)
+                                
+                                # 保存并显示网络图
+                                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as f:
+                                    net.save_graph(f.name)
+                                    with open(f.name, 'r', encoding='utf-8') as f:
+                                        html_content = f.read()
+                                    components.html(html_content, height=600)
+                                    os.unlink(f.name)
+                                
+                                # 使用大模型分析用药关联
+                                if medication_data:
+                                    with st.spinner("正在分析用药关联..."):
+                                        # 获取每个患者的完整用药信息
+                                        patient_medications_query = """
+                                        SELECT 
+                                            e.ENTITY_NAME as patient_name,
+                                            JSON_QUERY(e.ENTITY_VALUE, '$.用药记录') as medications
+                                        FROM MEDICAL_ENTITIES e
+                                        WHERE e.ENTITY_TYPE = '患者'
+                                        """
+                                        patient_medications_results = graph_store.execute_sql(patient_medications_query)
+                                        
+                                        # 构建分析文本
+                                        analysis_text = []
+                                        for result in patient_medications_results:
+                                            patient_name = result['patient_name']
+                                            medications = json.loads(result['medications'] or '[]')
+                                            
+                                            if medications:
+                                                analysis_text.append(f"\n患者 {patient_name} 的用药记录：")
+                                                for med in medications:
+                                                    med_text = f"- {med['药品']}"
+                                                    if '用法' in med:
+                                                        med_text += f"（{med['用法']}"
+                                                        if '剂量' in med:
+                                                            med_text += f"，{med['剂量']}"
+                                                        med_text += "）"
+                                                    analysis_text.append(med_text)
+                                        
+                                        # 构建提示词
+                                        prompt = f"""
+                                        请分析以下患者群体的用药关联情况，给出专业的医学分析意见。
+                                        请包含以下方面：
+                                        1. 患者群体的主要用药类型分布
+                                        2. 药物之间的相互作用分析
+                                        3. 用药方案的合理性分析
+                                        4. 可能的用药风险提示
+                                        5. 对临床用药的建议
+
+                                        患者用药数据：
+                                        {chr(10).join(analysis_text)}
+
+                                        请用专业但易懂的语言回答。
+                                        """
+
+                                        try:
+                                            # 初始化OpenAI客户端
+                                            client = OpenAI(
+                                                api_key=os.getenv("OPENAI_API_KEY"),
+                                                base_url=os.getenv("OPENAI_API_BASE")
+                                            )
+                                            
+                                            # 调用OpenAI API进行分析
+                                            response = client.chat.completions.create(
+                                                model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
+                                                messages=[
+                                                    {"role": "system", "content": "你是一位经验丰富的临床药师，擅长分析患者用药方案和药物相互作用。"},
+                                                    {"role": "user", "content": prompt}
+                                                ],
+                                                temperature=0.7
+                                            )
+                                            
+                                            # 显示分析结果
+                                            st.write("### 用药关联分析")
+                                            st.markdown(response.choices[0].message.content)
+                                        except Exception as e:
+                                            logger.error("大模型分析失败: %s", str(e))
+                                            st.error(f"分析失败: {str(e)}")
+                                else:
+                                    st.info("未找到足够的用药数据进行分析")
                             else:
                                 st.info("未找到用药关联")
                     except Exception as e:
+                        logger.error("分析失败: %s", str(e))
                         st.error(f"分析失败: {str(e)}")
                         
         elif query_type == "患者治疗方案对比":
@@ -2060,6 +2231,83 @@ def display_property_graph_search():
                         st.error(f"查询失败: {str(e)}")
             else:
                 st.warning("请输入查询语句")
+
+def analyze_medication():
+    query = """
+    WITH PATIENT_MEDS AS (
+        SELECT 
+            e.entity_name as patient_name,
+            j.content as treatment_content
+        FROM MEDICAL_ENTITIES e,
+        JSON_TABLE(e.entity_value, '$.诊疗经过[*]' 
+            COLUMNS (
+                content PATH '$.内容'
+            )
+        ) j
+        WHERE e.entity_type = '患者'
+        AND REGEXP_LIKE(j.content, '给予|使用|服用|治疗|用药', 'i')
+    )
+    SELECT 
+        patient_name,
+        treatment_content,
+        COUNT(*) OVER (PARTITION BY treatment_content) as usage_count
+    FROM PATIENT_MEDS
+    ORDER BY usage_count DESC, patient_name
+    """
+    
+    results = execute_sql(query)
+    
+    if not results:
+        st.warning("未找到用药记录数据。这可能是因为：\n1. 数据中没有记录用药信息\n2. 用药信息的记录格式需要标准化")
+        return
+        
+    # 展示用药分析结果
+    st.subheader("患者用药分析")
+    
+    # 创建数据表格
+    df = pd.DataFrame(results, columns=['患者姓名', '用药记录', '使用频次'])
+    
+    # 显示详细数据表格
+    st.dataframe(df)
+    
+    # 使用plotly创建可视化图表
+    fig = px.bar(df, 
+                 x='用药记录', 
+                 y='使用频次',
+                 title='用药频次分布',
+                 color='使用频次',
+                 hover_data=['患者姓名'])
+    
+    fig.update_layout(
+        xaxis_title="用药记录",
+        yaxis_title="使用频次",
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig)
+    
+    # 添加AI分析见解
+    st.subheader("AI分析见解")
+    
+    # 计算一些基本统计信息
+    total_patients = len(df['患者姓名'].unique())
+    total_medications = len(df['用药记录'].unique())
+    most_common_med = df.loc[df['使用频次'].idxmax(), '用药记录']
+    
+    analysis_text = f"""
+    根据数据分析，发现以下主要特点：
+    
+    1. 共有{total_patients}位患者的用药记录
+    2. 记录中包含{total_medications}种不同的治疗方案
+    3. 最常见的治疗方案是"{most_common_med}"
+    
+    建议：
+    - 进一步细化用药记录的分类
+    - 标准化用药记录的格式
+    - 添加药物剂量、用药时间等详细信息
+    """
+    
+    st.markdown(analysis_text)
 
 def main():
     st.title("医疗文档智能检索系统")
