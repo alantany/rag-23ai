@@ -14,14 +14,13 @@ from dotenv import load_dotenv
 import shutil
 from pathlib import Path
 import logging
-import openai
+from openai import OpenAI
 import pdfplumber
 import json
 import datetime
 import hashlib
 from typing import Dict, Any, List
 from decimal import Decimal
-from openai import OpenAI
 from utils.medical_graph_parser import MedicalGraphParser
 from pyvis.network import Network
 import streamlit.components.v1 as components
@@ -173,7 +172,7 @@ def init_database():
 
 class MedicalRecordParser:
     def __init__(self):
-        self.client = openai.OpenAI(
+        self.client = OpenAI(
             api_key=OPENAI_API_KEY,
             base_url=OPENAI_API_BASE
         )
@@ -301,7 +300,7 @@ def search_similar_documents(query: str, top_k: int = 3):
         """
 
         # 使用新 OpenAI API
-        client = openai.OpenAI(
+        client = OpenAI(
             api_key=OPENAI_API_KEY,
             base_url=OPENAI_API_BASE
         )
@@ -722,7 +721,7 @@ def analyze_graph_query(query_text: str) -> Dict[str, Any]:
 
         查询文本：{query_text}
 
-        患者 {patient_name} 的实际数据结构如下：
+        患者 {patient_name} 的实际数据结构��下：
         {json.dumps(patient_data, ensure_ascii=False, indent=2)}
 
         你需要分析用户的查询意图，返回一个JSON对象（不要添加任何markdown格式或代码块标记），包含以下字段：
@@ -1658,7 +1657,7 @@ def display_property_graph_search():
                                 
                                 # 构建提示词
                                 prompt = f"""
-                                请分析以下患者的异常生化指标，给出专业的医学分析意见。
+                                请分析以下患者的异常��化指��，给出专业的医学分析意见。
                                 请包含以下方面：
                                 1. 异常指标的临床意义
                                 2. 可能的病理生理机制

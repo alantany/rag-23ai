@@ -1,4 +1,4 @@
-import openai
+from openai import OpenAI
 from typing import Dict, Any
 import logging
 import json
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class MedicalRecordParser:
     def __init__(self):
-        self.client = openai.OpenAI(
+        self.client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_API_BASE")
         )
@@ -41,7 +41,7 @@ class MedicalRecordParser:
             病历内容如下：
             {content}
 
-            请严格按照上述JSON格式返回，确保每个字段都有值，没有的信息填写"未提供"。
+            请严��按照上述JSON格式返回，确保每个字段都有值，没有的信息填写"未提供"。
             只返回JSON格式，不要有其他说明文字。
             """
 

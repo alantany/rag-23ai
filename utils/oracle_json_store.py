@@ -33,9 +33,7 @@ class OracleJsonStore:
                 wait_timeout=10,
                 timeout=60,
                 retry_count=3,
-                retry_delay=2,
-                encoding='UTF-8',
-                nencoding='UTF-8'
+                retry_delay=2
             )
             logger.info("成功初始化OracleJsonStore连接池")
         except Exception as e:

@@ -1,4 +1,4 @@
-import openai
+from openai import OpenAI
 from typing import Dict, Any, List, Tuple
 import logging
 import json
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class MedicalGraphParser:
     def __init__(self):
-        self.client = openai.OpenAI(
+        self.client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_API_BASE")
         )
@@ -102,7 +102,7 @@ class MedicalGraphParser:
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON修复失败: {str(e)}")
                     logger.error(f"修复后的内容:\n{cleaned_content}")
-                    # 尝试使用更激进的修复方式
+                    # 尝���使用更激进的修复方式
                     try:
                         # 使用正则表达式清理不可见字符
                         cleaned_content = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', cleaned_content)
@@ -319,7 +319,7 @@ class MedicalGraphParser:
                 ],
                 "生化指标": [
                     {{
-                        "项目": "检验项目名称",
+                        "项目": "检验���目名称",
                         "结果": "检验结果值",
                         "单位": "单位值",
                         "参考范围": "范围值"
