@@ -2162,8 +2162,9 @@ def display_property_graph_search():
         SELECT *
         FROM GRAPH_TABLE ( MEDICAL_KG
             MATCH (v) -[e]-> (s)
-            WHERE v.ENTITY_TYPE = 'PATIENT'
-            AND e.RELATION_TYPE = 'HAS_SYMPTOM'
+            WHERE v.ENTITY_TYPE = '患者'
+            AND e.RELATION_TYPE = '现病史'
+            AND s.ENTITY_TYPE = '现病史'
             COLUMNS (
                 v.ENTITY_NAME AS patient_name,
                 s.ENTITY_VALUE AS symptom
@@ -2176,9 +2177,10 @@ def display_property_graph_search():
         SELECT *
         FROM GRAPH_TABLE ( MEDICAL_KG
             MATCH (v) -[e]-> (s)
-            WHERE v.ENTITY_TYPE = 'PATIENT'
-            AND e.RELATION_TYPE = 'HAS_SYMPTOM'
-            AND s.ENTITY_VALUE LIKE '%发热%'
+            WHERE v.ENTITY_TYPE = '患者'
+            AND e.RELATION_TYPE = '现病史'
+            AND s.ENTITY_TYPE = '现病史'
+            AND JSON_EXISTS(s.ENTITY_VALUE, '$.症状[*]?(@=="发热")')
             COLUMNS (
                 v.ENTITY_NAME AS patient_name
             )
@@ -2189,16 +2191,15 @@ def display_property_graph_search():
         ```sql
         SELECT *
         FROM GRAPH_TABLE ( MEDICAL_KG
-            MATCH (v) -[e]-> (i)
-            WHERE v.ENTITY_TYPE = 'PATIENT'
-            AND e.RELATION_TYPE = 'HAS_INDICATOR'
-            AND i.REFERENCE_RANGE = '异常'
+            MATCH (v) -[e]-> (s)
+            WHERE v.ENTITY_TYPE = '患者'
+            AND JSON_EXISTS(v.ENTITY_VALUE, '$.生化指标[*]?(@.参考范围=="异常")')
             COLUMNS (
                 v.ENTITY_NAME AS patient_name,
-                i.INDICATOR_NAME AS indicator_name,
-                i.VALUE AS value,
-                i.UNIT AS unit,
-                i.REFERENCE_RANGE AS reference_range
+                JSON_QUERY(v.ENTITY_VALUE, '$.生化指标[*].项目' WITH ARRAY WRAPPER) AS indicator_name,
+                JSON_QUERY(v.ENTITY_VALUE, '$.生化指标[*].结果' WITH ARRAY WRAPPER) AS value,
+                JSON_QUERY(v.ENTITY_VALUE, '$.生化指标[*].单位' WITH ARRAY WRAPPER) AS unit,
+                JSON_QUERY(v.ENTITY_VALUE, '$.生化指标[*].参考范围' WITH ARRAY WRAPPER) AS reference_range
             )
         )
         ```
