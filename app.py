@@ -2309,7 +2309,8 @@ def analyze_medication():
     st.markdown(analysis_text)
 
 def main():
-    st.title("医疗文档智能检索系统")
+    st.title("基于Oracle 23AI电子病历检索系统", anchor=False)
+    st.markdown("<div style='text-align: right'>Developed by Huaiyuan Tan</div>", unsafe_allow_html=True)
     
     # 初始化数据库
     init_database()
