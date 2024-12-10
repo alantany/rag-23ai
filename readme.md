@@ -5,9 +5,6 @@
 1. 基于向量的语义检索
 2. 基于结构化JSON的精确检索(含全文索引)
 3. 基于知识图谱的关系检索
-
-本系统提供了四种智能检索方式:
-
 4. 基于Oracle Property Graph的图模式检索
 
 ## 系统架构
@@ -18,6 +15,80 @@
 - OpenAI API: 自然语言处理
 - Sentence Transformers: 文本向量化
 - Oracle Property Graph: 图数据存储和查询
+- Pyvis: 知识图谱可视化
+
+## 主要功能
+
+### 1. 文档管理
+- 支持上传医疗文档（文本、PDF）
+- 自动解析文档结构
+- 生成向量、JSON和图数据
+
+### 2. 向量语义检索
+- 基于文档语义相似度的智能搜索
+- 支持自然语言查询
+- 按相关度排序展示结果
+
+### 3. 结构化检索
+- JSON路径精确查询
+- 全文索引关键词搜索
+- 复合条件组合查询
+
+### 4. 图数据检索
+- 患者知识图谱可视化
+- 实体关系网络展示
+- 图数据导航与探索
+- 支持按患者姓名、症状、诊断等搜索
+
+## 图数据检索功能说明
+
+### 功能特点
+1. 患者文档列表
+   - 显示所有已解析的患者文档
+   - 使用折叠面板优化展示
+   - 支持批量查看
+
+2. 知识图谱可视化
+   - 交互式网络图展示
+   - 节点分类着色
+   - 关系线条标注
+   - 支持缩放和拖拽
+
+3. 患者信息展示
+   - 基本信息
+   - 主诉与诊断
+   - 现病史
+   - 生命体征
+   - 生化指标
+   - 诊疗经过
+   - 出院医嘱
+
+4. 搜索功能
+   - 支持多维度搜索
+   - 实时结果更新
+   - 高亮显示匹配项
+
+### 技术实现
+1. 数据存储
+   - 使用Oracle数据库存储实体和关系
+   - 实体表（MEDICAL_ENTITIES）
+   - 关系表（MEDICAL_RELATIONS）
+
+2. 图谱可视化
+   - 使用Pyvis生成交互式网络图
+   - 支持自定义节点样式
+   - 支持自定义布局算法
+
+3. 界面设计
+   - 使用Streamlit组件
+   - Tab页分类展示
+   - Expander折叠优化
+   - 响应式布局
+
+4. 错误处理
+   - 完整的异常捕获
+   - 友好的错误提示
+   - 详细的日志记录
 
 ## 检索功能说明
 
@@ -74,7 +145,7 @@ FETCH FIRST :top_k ROWS ONLY;
 
 ### 2. 结构化JSON检索
 
-将非结构化医疗文档转换为结构化JSON格式,支持两种查询方式:
+将非结构化医疗文档转换为结构化JSON格式,支持两种��询方式:
 
 #### 技术方案
 - 使用GPT模型解析文档结构
@@ -130,7 +201,7 @@ INDEXTYPE IS CTXSYS.CONTEXT;
         "血红蛋白": "135g/L",
         "血小板": "223×10^9/L"
     },
-    "诊疗经过": "入院后给予退热、止咳等对症治疗...",
+    "诊疗经过": "入院后给予退热、止咳等对���治疗...",
     "出院医嘱": [
         "注意休息，避免受凉",
         "规律服药，定期复查"
@@ -238,7 +309,7 @@ CREATE INDEX relation_doc_ref_idx ON MEDICAL_RELATIONS(DOC_REFERENCE);
    - 检验值
    - 参考范围
 
-6. 诊疗经过实体：
+6. ���疗经过实体：
    - 诊疗过程
    - 出院医嘱
 
@@ -261,7 +332,7 @@ CREATE INDEX relation_doc_ref_idx ON MEDICAL_RELATIONS(DOC_REFERENCE);
    - HAS_VITAL_SIGN(患者-体征)
    - VITAL_SIGN_VALUE(体征-数值)
 
-5. 生化��标关系：
+5. 生化指标关系：
    - HAS_LAB_TEST(患者-检验)
    - LAB_TEST_VALUE(检验-结果)
    - LAB_TEST_REFERENCE(检验-参考值)
@@ -401,7 +472,7 @@ FROM GRAPH_TABLE ( MEDICAL_KG
 
 2. ORA-40988: Subquery is not allowed in a GRAPH_TABLE operator
    - 问题原因：GRAPH_TABLE 操作符中不允许使用子查询
-   - 解决方案：避免在 GRAPH_TABLE 的 WHERE 子句中使用���查询，如果需要参数，直接使用绑定变量
+   - 解决方案：避免在 GRAPH_TABLE 的 WHERE 子句中使用查询，如果需要参数，直接使用绑定变量
 
 3. ORA-02000: missing MATCH keyword
    - 问题原因：GRAPH_TABLE 查询语法结构不正确
@@ -562,7 +633,7 @@ python scripts/export_data.py
 
 ### 导入功能
 
-使用 `scripts/import_data.py` 可以��入数据：
+使用 `scripts/import_data.py` 可以入数据：
 
 ```bash
 python scripts/import_data.py

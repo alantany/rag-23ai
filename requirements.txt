@@ -1,18 +1,28 @@
+# 基础依赖
 streamlit==1.29.0
-numpy==1.24.3
-pandas==2.0.3
+python-dotenv==1.0.0
+
+# 数据库
+# 从Oracle官方下载特定版本的wheel文件
+oracledb-2.0.0.dev20231121-cp311-cp311-manylinux_2_17_x86_64.whl
+
+# 文档处理
+pdfplumber==0.10.3
+pdfminer.six==20221105
+
+# AI和向量化
+openai==1.57.1
 sentence-transformers==2.2.2
 torch==2.0.1
-torchvision==0.15.2
-huggingface-hub==0.19.4
-pdfplumber==0.10.3
-python-dotenv==1.0.0
-oracledb-2.0.0.dev20231121-cp38-cp38-macosx_11_0_universal2.whl
-transformers==4.35.2
-regex==2023.10.3
-safetensors==0.4.1
-tokenizers==0.15.0
-openai==1.57.1
-plotly==5.18.0
-networkx==3.2.1
+
+# 图数据可视化
 pyvis==0.3.2
+networkx==3.2.1
+
+# 数据处理
+numpy==1.24.3
+pandas==2.0.3
+
+# 工具库
+tqdm==4.66.5
+python-dateutil==2.9.0.post0
