@@ -32,27 +32,49 @@ class OracleVectorStore:
             increment=1
         )
         logger.info(f"初始化OracleVectorStore, 向量维度: {vector_dimension}")
+        
+        # 确保表和序列存在
+        self.init_schema()
 
     def init_schema(self):
-        """创建必要的表"""
+        """创建必要的表和序列"""
         with self.pool.acquire() as connection:
             with connection.cursor() as cursor:
+                # 检查表是否存在
                 logger.info("检查表是否存在")
-                check_sql = """
+                check_table_sql = """
                     SELECT COUNT(*) 
                     FROM user_tables 
                     WHERE table_name = 'DOCUMENT_VECTORS'
                 """
-                logger.debug(f"执行SQL: {check_sql}")
-                cursor.execute(check_sql)
+                cursor.execute(check_table_sql)
                 table_exists = cursor.fetchone()[0] > 0
                 logger.info(f"表是否存在: {table_exists}")
                 
+                # 检查序列是否存在
+                logger.info("检查序列是否存在")
+                check_sequence_sql = """
+                    SELECT COUNT(*)
+                    FROM user_sequences
+                    WHERE sequence_name = 'DOCUMENT_VECTORS_SEQ'
+                """
+                cursor.execute(check_sequence_sql)
+                sequence_exists = cursor.fetchone()[0] > 0
+                logger.info(f"序列是否存在: {sequence_exists}")
+                
+                # 如果表不存在，创建表和序列
                 if not table_exists:
                     logger.info("创建表")
+                    # 先删除可能存在的表
+                    try:
+                        cursor.execute("DROP TABLE document_vectors")
+                    except:
+                        pass
+                    
+                    # 创建新表
                     create_table_sql = f"""
                         CREATE TABLE document_vectors (
-                            id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                            id NUMBER DEFAULT document_vectors_seq.NEXTVAL PRIMARY KEY,
                             file_path VARCHAR2(1000),
                             content CLOB,
                             vector VECTOR({self.vector_dimension}),
@@ -64,6 +86,23 @@ class OracleVectorStore:
                     cursor.execute(create_table_sql)
                     connection.commit()
                     logger.info("表创建完成")
+                
+                # 如果序列不存在，创建序列
+                if not sequence_exists:
+                    logger.info("创建序列")
+                    try:
+                        cursor.execute("DROP SEQUENCE document_vectors_seq")
+                    except:
+                        pass
+                    
+                    cursor.execute("""
+                        CREATE SEQUENCE document_vectors_seq 
+                        START WITH 1 
+                        INCREMENT BY 1 
+                        NOCACHE
+                    """)
+                    connection.commit()
+                    logger.info("序列创建完成")
 
     def batch_add_vectors(self, vectors: List[np.ndarray], documents: List[Dict[str, Any]], batch_size: int = 1000):
         """批量添加向量和文档"""
@@ -89,8 +128,10 @@ class OracleVectorStore:
                     
                     # 执行批量插入
                     cursor.executemany("""
-                        INSERT INTO document_vectors (file_path, content, vector, metadata)
-                        VALUES (:1, :2, :3, :4)
+                        INSERT INTO document_vectors 
+                            (id, file_path, content, vector, metadata)
+                        VALUES 
+                            (document_vectors_seq.NEXTVAL, :1, :2, :3, :4)
                     """, data)
                     
                     connection.commit()
@@ -103,8 +144,10 @@ class OracleVectorStore:
                 for vector, doc in zip(vectors, documents):
                     vector_str = '[' + ','.join(map(str, vector.tolist())) + ']'
                     insert_sql = """
-                        INSERT INTO document_vectors (file_path, content, vector, metadata)
-                        VALUES (:1, :2, :3, :4)
+                        INSERT INTO document_vectors 
+                            (id, file_path, content, vector, metadata)
+                        VALUES 
+                            (document_vectors_seq.NEXTVAL, :1, :2, :3, :4)
                     """
                     logger.debug(f"执行SQL: {insert_sql}")
                     logger.debug(f"文件路径: {doc['file_path']}")

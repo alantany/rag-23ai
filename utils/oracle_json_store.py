@@ -165,6 +165,10 @@ class OracleJsonStore:
                     else:
                         cursor.execute(search_sql)
                     
+                    # 对于INSERT/UPDATE/DELETE等不返回结果的SQL，直接返回空列表
+                    if cursor.description is None:
+                        return []
+                        
                     columns = [col[0].lower() for col in cursor.description]
                     results = []
                     
@@ -187,6 +191,7 @@ class OracleJsonStore:
                         results.append(result)
                     
                     return results
+                
         except Exception as e:
             logger.error(f"查询执行失败: {str(e)}")
             raise 
