@@ -36,6 +36,10 @@ class OracleJsonStore:
                 retry_delay=2
             )
             logger.info("成功初始化OracleJsonStore连接池")
+            
+            # 初始化数据库表结构
+            self.init_schema()
+            
         except Exception as e:
             logger.error(f"初始化连接池失败: {str(e)}")
             raise
@@ -102,33 +106,56 @@ class OracleJsonStore:
             raise
 
     def search_documents(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
-        """搜索文档"""
-        with self.pool.acquire() as connection:
-            with connection.cursor() as cursor:
-                # 使用 JSON_EXISTS 进行搜索
-                search_sql = """
-                    SELECT d.doc_info,
-                           d.doc_json,
-                           1 as relevance
-                    FROM DOCUMENT_JSON d
-                    WHERE JSON_EXISTS(d.doc_json, '$?(@.患者姓名 == :1)')
-                       OR JSON_EXISTS(d.doc_json, '$?(@.主诉 == :1)')
-                       OR JSON_EXISTS(d.doc_json, '$.现病史[*]?(@.content == :1)')
-                       OR JSON_EXISTS(d.doc_json, '$.入院诊断[*]?(@.content == :1)')
-                       OR JSON_EXISTS(d.doc_json, '$.出院诊断[*]?(@.content == :1)')
-                    FETCH FIRST :2 ROWS ONLY
-                """
-                cursor.execute(search_sql, [query, top_k])
+        """搜索文档
+        1. 从问题中提取患者姓名
+        2. 根据患者姓名查找对应的文档
+        3. 返回文档内容供后续处理
+        """
+        try:
+            # 预定义的患者名字列表
+            patient_names = ["马某某", "周某某", "刘某某", "蒲某某", "杨某某"]
+            
+            # 从问题中识别患者姓名
+            target_name = None
+            for name in patient_names:
+                if name in query:
+                    target_name = name
+                    break
+            
+            if not target_name:
+                logger.warning(f"未从问题中识别出患者姓名: {query}")
+                return []
+            
+            logger.info(f"从问题中识别出患者: {target_name}")
+            
+            # 根据患者姓名查找文档
+            with self.pool.acquire() as connection:
+                with connection.cursor() as cursor:
+                    search_sql = """
+                        SELECT d.doc_info, d.doc_json
+                        FROM DOCUMENT_JSON d
+                        WHERE d.doc_info LIKE :1
+                        ORDER BY d.created_at DESC
+                        FETCH FIRST 1 ROWS ONLY
+                    """
+                    doc_pattern = f"{target_name}.pdf"
+                    logger.info(f"搜索文档: {doc_pattern}")
+                    cursor.execute(search_sql, [doc_pattern])
+                    
+                    results = []
+                    for row in cursor:
+                        results.append({
+                            'doc_info': row[0],
+                            'doc_json': json.loads(row[1].read()) if hasattr(row[1], 'read') else row[1],
+                            'query': query  # 保存原始问题，供后续生成答案使用
+                        })
+                    
+                    logger.info(f"搜索完成，找到 {len(results)} 个结果")
+                    return results
                 
-                results = []
-                for row in cursor:
-                    results.append({
-                        'doc_info': row[0],
-                        'doc_json': json.loads(row[1].read()) if hasattr(row[1], 'read') else row[1],
-                        'relevance': row[2]
-                    })
-                
-                return results
+        except Exception as e:
+            logger.error(f"搜索文档失败: {str(e)}")
+            return []
 
     def close(self):
         """关闭连接池"""
